@@ -2356,7 +2356,7 @@ if(document.readyState==='loading'){
   function toEmpInt(v){return String(v||"");}
 
   /* ---- helper: ensure employee exists in Supabase ---- */
-  async function ensureEmployeeInSupabase(employeeId){
+  window.ensureEmployeeInSupabase=async function ensureEmployeeInSupabase(employeeId){
     var empIdStr=String(employeeId||'');
     if(!empIdStr)return false;
     var emp=(getEmployees()||[]).find(function(e){return String(e.id)===empIdStr||String(e.emp_id)===empIdStr;});
