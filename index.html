@@ -607,40 +607,41 @@ function setData(k,v){
 /* ══ EMPLOYEES ════════════════════════════════════════════ */
 /* ══ SUPABASE DATA FUNCTIONS ═════════════════════════════ */
 async function fetchEmployees(){
+  function normEmp(e){
+    if(!e) return e;
+    if(e.date_of_birth)e.date_of_birth=String(e.date_of_birth).substring(0,10);
+    if(e.joining_date)e.joining_date=String(e.joining_date).substring(0,10);
+    return e;
+  }
   try{
     const {data,error}=await getSB().from('employees').select('*').order('emp_id');
     if(error)throw error;
-    if(data&&data.length){
-      // normalize date fields
-      data.forEach(function(e){
-        if(e.date_of_birth)e.date_of_birth=e.date_of_birth.substring(0,10);
-        if(e.joining_date)e.joining_date=e.joining_date.substring(0,10);
+    const localEmps=getData('employees',[])||[];
+    const baseEmps=localEmps.length?localEmps:getEmployees();
+    const merged={};
+    baseEmps.forEach(function(e){ merged[e.id]=normEmp(Object.assign({},e)); });
+    (data||[]).forEach(function(e){
+      e=normEmp(Object.assign({},e));
+      const prev=merged[e.id]||{};
+      merged[e.id]=Object.assign({},prev,e);
+      ['avatar_url','status_emoji','status_text','date_of_birth','joining_date','phone','designation','department','employment_type','password'].forEach(function(k){
+        if((!merged[e.id][k] && prev[k]) || merged[e.id][k]===null) merged[e.id][k]=prev[k];
       });
-      // Merge: add any hardcoded employees missing from Supabase
-      const hardcodedEmps=getEmployees();
-      let changed=false;
-      hardcodedEmps.forEach(function(hEmp){
-        if(!data.find(function(d){return d.id===hEmp.id;})){
-          data.push(hEmp);
-          getSB().from('employees').upsert(hEmp,{onConflict:'id'}).catch(function(){});
-          changed=true;
-        }
-      });
-      // Preserve avatars from local cache
-      const localEmps=getData('employees',[]);
-      data.forEach(function(sbEmp){
-        const loc=localEmps.find(function(l){return l.id===sbEmp.id;});
-        if(loc&&loc.avatar_url&&!sbEmp.avatar_url){sbEmp.avatar_url=loc.avatar_url;}
-      });
-      setData('employees',data);
-      return data;
-    }
+      if(typeof prev.active==='boolean' && typeof e.active!=='boolean') merged[e.id].active=prev.active;
+      if(typeof prev.blocked==='boolean' && typeof e.blocked!=='boolean') merged[e.id].blocked=prev.blocked;
+    });
+    const finalData=Object.keys(merged).map(function(k){ return normEmp(merged[k]); }).sort(function(a,b){
+      return parseInt(a.emp_id||a.id||0)-parseInt(b.emp_id||b.id||0);
+    });
+    setData('employees',finalData);
+    finalData.forEach(function(emp){
+      getSB().from('employees').upsert(emp,{onConflict:'id'}).catch(function(){});
+    });
+    return finalData;
   }catch(err){console.warn('fetchEmployees error:',err);}
-  // Supabase returned empty or failed — use local/hardcoded AND seed Supabase
   const localEmps = getData('employees', null);
   const empsToUse = localEmps && localEmps.length ? localEmps : getEmployees();
   if(empsToUse && empsToUse.length){
-    // Seed Supabase in background (fire and forget)
     empsToUse.forEach(function(emp){
       getSB().from('employees').upsert(emp,{onConflict:'id'}).catch(function(){});
     });
@@ -654,17 +655,20 @@ async function fetchAttendance(){
     const {data,error}=await getSB().from('attendance').select('*').order('date',{ascending:false});
     if(error)throw error;
     if(data){
-      data.forEach(function(a){if(a.date)a.date=a.date.substring(0,10);});
-      const local=getData('attendance',[]);
-      const mergedMap={};
-      local.forEach(function(a){ if(a&&a.id) mergedMap[a.id]=a; });
-      data.forEach(function(a){ if(a&&a.id) mergedMap[a.id]=Object.assign({}, mergedMap[a.id]||{}, a); });
-      const merged=Object.values(mergedMap).sort(function(a,b){
-        const da=(b.date||'')+(b.check_in||'');
-        const db=(a.date||'')+(a.check_in||'');
-        return da.localeCompare(db);
+      data.forEach(function(a){if(a.date)a.date=String(a.date).substring(0,10);});
+      const local=getData('attendance',[])||[];
+      const merged={};
+      local.forEach(function(a){ merged[a.id]=Object.assign({},a); });
+      data.forEach(function(a){
+        const prev=merged[a.id]||{};
+        merged[a.id]=Object.assign({},prev,a);
+        if(prev.admin_fix && !a.admin_fix) merged[a.id].admin_fix=true;
+        if(prev.admin_note && !a.admin_note) merged[a.id].admin_note=prev.admin_note;
       });
-      setData('attendance',merged);return merged;
+      const finalData=Object.keys(merged).map(function(k){ return merged[k]; }).sort(function(a,b){
+        return String(b.date||'').localeCompare(String(a.date||'')) || String(b.id||'').localeCompare(String(a.id||''));
+      });
+      setData('attendance',finalData);return finalData;
     }
   }catch(err){console.warn('fetchAttendance error:',err);}
   return getData('attendance',[]);
@@ -689,12 +693,8 @@ async function fetchSettings(){
 }
 
 async function pushAttendance(rec){
-  // always update local cache first
-  const att=getData('attendance',[]);
-  const idx=att.findIndex(function(a){return a.id===rec.id;});
-  if(idx>=0)att[idx]=Object.assign({},att[idx],rec);else att.unshift(rec);
-  setData('attendance',att);
   try{
+    // Map to Supabase column names (handles extra local fields)
     const sbRec={
       id:          rec.id,
       employee_id: rec.employee_id,
@@ -710,17 +710,16 @@ async function pushAttendance(rec){
       checkout_lat:    rec.checkout_lat    || null,
       checkout_lon:    rec.checkout_lon    || null,
       late_minutes:    rec.late_minutes    || 0,
-      overtime_minutes:rec.overtime_minutes|| 0,
-      salary_deduction: rec.salary_deduction || false
+      overtime_minutes:rec.overtime_minutes|| 0
     };
-    const {error}=await getSB().from('attendance').upsert(sbRec,{onConflict:'id'}).select();
+    const {error}=await getSB().from('attendance').upsert(sbRec,{onConflict:'id'});
     if(error)throw error;
-    return true;
-  }catch(err){
-    console.warn('pushAttendance error:',err);
-    toast('⚠️ Attendance saved locally, but Supabase sync failed. Check table/RLS.',5000);
-    return false;
-  }
+  }catch(err){console.warn('pushAttendance error:',err);}
+  // always update local cache
+  const att=getData('attendance',[]);
+  const idx=att.findIndex(function(a){return a.id===rec.id;});
+  if(idx>=0)att[idx]=rec;else att.unshift(rec);
+  setData('attendance',att);
 }
 
 async function pushLeave(rec){
@@ -797,7 +796,7 @@ function getEmployees(){
 function saveEmployees(arr){setData('employees',arr);}
 function getAttendance(){return getData('attendance',[]);}
 function saveAttendance(arr){setData('attendance',arr);}
-async function saveAttendanceRec(rec){return await pushAttendance(rec);}
+function saveAttendanceRec(rec){return pushAttendance(rec);}
 function getLeaves(){return getData('leaves',[]);}
 function saveLeaves(arr){setData('leaves',arr);}
 function saveLeaveRec(rec){pushLeave(rec);}
@@ -887,7 +886,7 @@ function startAdminAutoRefresh(){
   _adminRefreshTimer=setInterval(function(){
     if(!currentProfile) return clearInterval(_adminRefreshTimer);
     // Always fetch fresh attendance from Supabase
-    Promise.all([fetchAttendance(),fetchLeaves()]).then(function(){
+    Promise.all([fetchEmployees(),fetchAttendance(),fetchLeaves()]).then(function(){
       // If admin tab is currently open, reload it
       var adminTab=document.getElementById('tab-admin');
       if(adminTab&&adminTab.style.display!=='none'){
@@ -984,14 +983,13 @@ function switchTab(id,btn){
   if(btn){btn.querySelector('.nav-ic').classList.add('on');btn.querySelector('.nav-lbl').classList.add('on');}
   // ✅ FIX: Save current tab so refresh restores it
   try{sessionStorage.setItem('ugm_curtab',id);}catch(e){}
-  if(id==='birthdays')loadBirthdays();
+  if(id==='birthdays'){fetchEmployees().then(function(){loadBirthdays();}).catch(function(){loadBirthdays();});}
   if(id==='anniversaries')loadAnniversaries();
   if(id==='holidays')loadHolidays();
   if(id==='leave')loadMyLeaves();
   if(id==='admin'){
     // ✅ FIX: Fetch FRESH data from Supabase THEN load admin
-    fetchAttendance().then(function(){
-      fetchLeaves().then(function(){
+    Promise.all([fetchEmployees(),fetchAttendance(),fetchLeaves()]).then(function(){
         // Restore last admin sub-tab
         var lastAdminTab=sessionStorage.getItem('ugm_admintab')||'today';
         loadAdminToday();
@@ -999,10 +997,9 @@ function switchTab(id,btn){
           var btn=document.querySelector('.atab[data-tab="'+lastAdminTab+'"]');
           if(btn) switchATab(lastAdminTab,btn);
         },200);
-      });
     }).catch(function(){loadAdminToday();});
   }
-  if(id==='profile')loadProfileTab();
+  if(id==='profile'){fetchEmployees().then(function(){loadProfileTab();}).catch(function(){loadProfileTab();});}
   if(id==='attendance'){
     fetchAttendance().then(function(){loadAttendanceTab();}).catch(function(){loadAttendanceTab();});
   }
@@ -1028,7 +1025,8 @@ function loadDashboard(){
 
 function loadTodayAttendance(){
   const today=todayStr();
-  const rec=getAttendance().find(a=>a.employee_id===currentProfile.id&&a.date===today&&a.work_type==='Office');
+  const recs=getAttendance().filter(function(a){return a.employee_id===currentProfile.id&&a.date===today;});
+  const rec=recs.find(function(a){return a.work_type==='Office';})||recs[0];
   document.getElementById('dash-ci').textContent=rec&&rec.check_in?fmtTime(rec.check_in):'—';
   document.getElementById('dash-co').textContent=rec&&rec.check_out?fmtTime(rec.check_out):'—';
   document.getElementById('dash-ci-status').textContent=rec?getStatusLabel(rec):'—';
@@ -1038,10 +1036,10 @@ function loadStats(){
   const now=new Date();const y=now.getFullYear();const mo=now.getMonth()+1;
   const from=y+'-'+pad(mo)+'-01';
   const arr=getAttendance().filter(a=>a.employee_id===currentProfile.id&&a.date>=from);
-  const present=arr.filter(a=>a.check_in&&(getAttLabel(a)==='On Time'||getAttLabel(a)==='Present'||getAttLabel(a)==='WFH')).length;
+  const present=arr.filter(a=>a.check_in&&getAttLabel(a)==='Present').length;
   const early=arr.filter(a=>a.check_in&&getAttLabel(a)==='Early').length;
   const late=arr.filter(a=>isLate(a)).length;
-  const abs=arr.filter(a=>getAttLabel(a)==='Absent').length;
+  const abs=arr.filter(a=>a.status==='Absent').length;
   const wfhc=arr.filter(a=>a.work_type==='WFH').length;
   document.getElementById('dash-stats').innerHTML=
     '<div class="stat-card" style="background:#f0fdf4;border-color:#bbf7d0"><div style="font-size:9px;font-weight:700;color:#16a34a">✅ Present</div><div style="font-size:24px;font-weight:800;color:#15803d;margin-top:1px">'+(present+early)+'</div><div style="font-size:9px;color:#86efac">This month</div></div>'+
@@ -1144,6 +1142,7 @@ async function doPunchAfterGPS(type,lat,lon){
   const time=pad(now.getHours())+':'+pad(now.getMinutes())+':'+pad(now.getSeconds());
   const att=getAttendance();
 
+  // If office location is set, verify distance
   if(offLat&&offLon){
     const dist=Math.round(calcDistance(lat,lon,offLat,offLon));
     if(dist>radius){
@@ -1160,39 +1159,29 @@ async function doPunchAfterGPS(type,lat,lon){
     if(att.find(function(a){return a.employee_id===currentProfile.id&&a.date===today&&a.work_type==='Office';})){
       toast('Already checked in today!');return;
     }
-    const status=getPunchInStatusFromTime(time);
+    const status=computeAttendanceStatus(time,'Office');
     const late=status==='Late';
     const newRec={id:Date.now()+'',employee_id:currentProfile.id,date:today,check_in:time,check_out:'',work_type:'Office',status:status,note:'',lat:lat,lon:lon};
+    att.push(newRec);
+    saveAttendance(att);
     await saveAttendanceRec(newRec);
+    await fetchAttendance();
     toast('✅ Checked In at '+time+(late?' — Late!':''));
   } else {
     const idx=att.findIndex(function(a){return a.employee_id===currentProfile.id&&a.date===today&&a.work_type==='Office'&&!a.check_out;});
     if(idx===-1){toast('Please check in first!');return;}
-    const rec=Object.assign({},att[idx]);
-    rec.check_out=time;rec.checkout_lat=lat;rec.checkout_lon=lon;
+    att[idx].check_out=time;att[idx].checkout_lat=lat;att[idx].checkout_lon=lon;
     const h=now.getHours();const m=now.getMinutes();
-    if(h<17||(h===17&&m<15)) rec.checkout_status='Half Day';
-    else if(h<18) rec.checkout_status='Short Leave PM';
-    else if(h===18&&m<=10) rec.checkout_status='Normal Exit';
-    else rec.checkout_status='Overtime';
-    await saveAttendanceRec(rec);
+    if(h<17||(h===17&&m<15)) att[idx].checkout_status='Half Day';
+    else if(h<18) att[idx].checkout_status='Short Leave PM';
+    else if(h===18&&m<=10) att[idx].checkout_status='Normal Exit';
+    else att[idx].checkout_status='Overtime';
+    saveAttendance(att);
+    await saveAttendanceRec(att[idx]);
+    await fetchAttendance();
     toast('✅ Checked Out at '+time);
   }
-  await fetchAttendance();
-  loadAttendanceTab();
-  loadDashboard();
-  if(isAdmin()) loadAdminToday();
-}
-
-function getPunchInStatusFromTime(time){
-  const s=getSettings();
-  const parts=(time||'00:00:00').split(':').map(Number);
-  const h=parts[0]||0,m=parts[1]||0;
-  const [oh,om]=(s.checkin_time||'10:00').split(':').map(Number);
-  const [lh,lm]=(s.late_after||'10:20').split(':').map(Number);
-  if(h<oh || (h===oh && m<om)) return 'Early';
-  if(h<lh || (h===lh && m<=lm)) return 'On Time';
-  return 'Late';
+  loadAttendanceTab();loadDashboard();if(isAdmin()){loadAdminToday();}else{var adminTab=document.getElementById('tab-admin');if(adminTab&&adminTab.style.display!=='none')loadAdminToday();}
 }
 
 function punch(type){
@@ -1245,30 +1234,23 @@ async function punchWFH(type){
   const note=document.getElementById('wfh-note').value;
   const att=getAttendance();
   if(type==='in'){
-    if(att.find(function(a){return a.employee_id===currentProfile.id&&a.date===today&&(a.work_type==='WFH'||a.work_type==='OT-WFH');})){
-      toast('Already checked in today!');return;
-    }
     const s=getSettings();const[wh,wm]=(s.wfh_deadline||'10:00').split(':').map(Number);
-    const afterDeadline=now.getHours()>wh||(now.getHours()===wh&&now.getMinutes()>wm);
-    const absent=afterDeadline&&wfhType==='WFH';
+    const after10=now.getHours()>wh||(now.getHours()===wh&&now.getMinutes()>=wm);
+    const absent=after10&&wfhType==='WFH';
     const wfhRec={id:Date.now()+'',employee_id:currentProfile.id,date:today,check_in:time,check_out:'',work_type:wfhType,status:absent?'Absent':'WFH',salary_deduction:absent,note:note||''};
-    await saveAttendanceRec(wfhRec);
+    att.push(wfhRec);
+    saveAttendance(att);
+    saveAttendanceRec(wfhRec);
     const wfhCI=document.getElementById('btn-wfh-ci');const wfhCO=document.getElementById('btn-wfh-co');
     wfhCI.textContent='✅ WFH In '+fmtTime(time);
     wfhCO.disabled=false;wfhCO.style.background='linear-gradient(135deg,#ef4444,#dc2626)';wfhCO.style.color='#fff';
-    toast(absent?'🚨 WFH deadline crossed! Marked absent.':'✅ WFH Checked In at '+time,absent?5000:2800);
+    toast(absent?'🚨 10:00 AM rule violated! Marked ABSENT — Salary deducted':'✅ WFH Checked In at '+time,absent?5000:2800);
   } else {
-    const idx=att.findIndex(a=>a.employee_id===currentProfile.id&&a.date===today&&(a.work_type==='WFH'||a.work_type==='OT-WFH')&&!a.check_out);
+    const idx=att.findIndex(a=>a.employee_id===currentProfile.id&&a.date===today&&a.work_type===wfhType&&!a.check_out);
     if(idx===-1){toast('WFH check-in not found!');return;}
-    const rec=Object.assign({},att[idx]);
-    rec.check_out=time;
-    await saveAttendanceRec(rec);
-    toast('✅ WFH Checked Out at '+time);
+    att[idx].check_out=time;saveAttendance(att);toast('✅ WFH Checked Out at '+time);
   }
-  await fetchAttendance();
-  loadAttendanceTab();
   loadDashboard();
-  if(isAdmin()) loadAdminToday();
 }
 
 /* ══ STATUS ═══════════════════════════════════════════════ */
@@ -1284,7 +1266,7 @@ function setStatus(btn){
   const emoji=btn.dataset.e;const text=btn.dataset.t;
   document.getElementById('status-modal')?.remove();
   const emps=getEmployees();const idx=emps.findIndex(e=>e.id===currentProfile.id);
-  emps[idx].status_emoji=emoji;emps[idx].status_text=text;saveEmployees(emps);
+  emps[idx].status_emoji=emoji;emps[idx].status_text=text;saveEmployees(emps);pushEmployee(emps[idx]).catch(function(){});
   currentProfile.status_emoji=emoji;currentProfile.status_text=text;
   ['dash','profile'].forEach(function(p){
     const ee=document.getElementById(p+'-status-emoji');const te=document.getElementById(p+'-status-text');
@@ -1388,7 +1370,7 @@ function saveCroppedAvatar(){
   const dataUrl=out.toDataURL('image/jpeg',.85);
   closeCropModal();
   const emps=getEmployees();const idx=emps.findIndex(e=>e.id===currentProfile.id);
-  emps[idx].avatar_url=dataUrl;saveEmployees(emps);currentProfile.avatar_url=dataUrl;
+  emps[idx].avatar_url=dataUrl;saveEmployees(emps);pushEmployee(emps[idx]).catch(function(){});currentProfile.avatar_url=dataUrl;
   setAvatarEls(currentProfile);toast('✅ Profile photo updated!');
 }
 function setAvatarEls(profile){
@@ -1731,16 +1713,11 @@ function renderRecords(data,date){
 
 function loadAdminToday(){
   if(!isAdmin())return;
-  const today=todayStr();
-  const emps=getEmployees().filter(function(e){return e.active!==false;});
+  const today=todayStr();const emps=getEmployees().filter(function(e){return e.active!==false;});
   const att=getAttendance().filter(function(a){return a.date===today;});
   const attMap={};
   att.forEach(function(a){
-    const existing=attMap[a.employee_id];
-    if(!existing){ attMap[a.employee_id]=a; return; }
-    if(existing.status==='Absent' && a.status!=='Absent'){ attMap[a.employee_id]=a; return; }
-    if((existing.work_type!=='Office') && a.work_type==='Office'){ attMap[a.employee_id]=a; return; }
-    if(!existing.check_in && a.check_in){ attMap[a.employee_id]=a; return; }
+    if(!attMap[a.employee_id]||a.work_type==='Office')attMap[a.employee_id]=a;
   });
   var present=0,late=0,absent=0,wfhCount=0;
   const rows=emps.map(function(e){
@@ -1749,31 +1726,31 @@ function loadAdminToday(){
       absent++;
       return'<div class="att-row">'+av+'<div style="flex:1;margin-left:9px"><div style="font-size:12px;font-weight:700">'+nm+'</div><div style="font-size:10px;color:#94a3b8">EMP-'+e.emp_id+'</div></div><span class="chip cr">— Absent</span></div>';
     }
-    const lbl=getAttLabel(a);
-    let chipCls='cg', icon='🏢';
-    if(lbl==='Absent'){
-      absent++; chipCls='cr'; icon='❌';
+    var lbl=getAttLabel(a), chipCls='cg', prefix='🏢 ';
+    if(a.work_type==='WFH'||a.work_type==='OT-WFH'){
+      wfhCount++; present++; lbl='WFH'; chipCls='cp'; prefix='🏠 ';
     }else if(lbl==='Late'){
-      present++; late++; chipCls='cy'; icon='⏰';
-    }else if(a.work_type==='WFH'||a.work_type==='OT-WFH'){
-      present++; wfhCount++; chipCls='cp'; icon='🏠';
-    }else if(lbl==='Short Leave AM'){
-      present++; chipCls='co'; icon='📋';
+      late++; present++; chipCls='cy';
     }else if(lbl==='Early'){
-      present++; chipCls='cbl'; icon='🕘';
+      present++; chipCls='cbl';
+    }else if(lbl==='Short Leave AM'){
+      present++; chipCls='co';
     }else{
-      present++; chipCls='cg'; icon='✅';
+      present++; chipCls='cg';
     }
-    return'<div class="att-row">'+av+'<div style="flex:1;margin-left:9px"><div style="font-size:12px;font-weight:700">'+nm+'</div><div style="font-size:10px;color:#94a3b8">IN:'+(a.check_in?fmtTime(a.check_in):'—')+' ('+(a.work_type||'Office')+')</div></div><span class="chip '+chipCls+'">'+icon+' '+lbl+'</span></div>';
+    return'<div class="att-row">'+av+'<div style="flex:1;margin-left:9px"><div style="font-size:12px;font-weight:700">'+nm+'</div><div style="font-size:10px;color:#94a3b8">IN:'+(a.check_in?fmtTime(a.check_in):'—')+' · OUT:'+(a.check_out?fmtTime(a.check_out):'—')+' · '+(a.work_type||'Office')+(a.admin_fix?' · Admin Fixed':'')+'</div></div><span class="chip '+chipCls+'">'+prefix+lbl+'</span></div>';
   });
+  const dt=new Date(today+'T00:00:00');
+  const weekdays=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
   document.getElementById('as-today').innerHTML=
-    '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px;margin-bottom:12px">'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:7px;margin-bottom:12px">'+
     '<div style="background:#fff;border-radius:14px;padding:14px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.06)"><div style="font-size:26px;font-weight:800;color:#10b981">'+present+'</div><div style="font-size:10px;color:#64748b;margin-top:2px">Present</div></div>'+
+    '<div style="background:#fff;border-radius:14px;padding:14px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.06)"><div style="font-size:26px;font-weight:800;color:#8b5cf6">'+wfhCount+'</div><div style="font-size:10px;color:#64748b;margin-top:2px">WFH</div></div>'+
     '<div style="background:#fff;border-radius:14px;padding:14px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.06)"><div style="font-size:26px;font-weight:800;color:#ef4444">'+absent+'</div><div style="font-size:10px;color:#64748b;margin-top:2px">Absent</div></div>'+
     '<div style="background:#fff;border-radius:14px;padding:14px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.06)"><div style="font-size:26px;font-weight:800;color:#f59e0b">'+late+'</div><div style="font-size:10px;color:#64748b;margin-top:2px">Late</div></div>'+
     '</div>'+
     '<div style="background:#fff;border-radius:14px;padding:14px;box-shadow:0 2px 8px rgba(0,0,0,.06)">'+
-    '<div style="font-weight:700;font-size:13px;color:#0f172a;margin-bottom:11px">Today — '+fmtDate(today)+(wfhCount?' · WFH: '+wfhCount:'')+'</div>'+
+    '<div style="font-weight:700;font-size:13px;color:#0f172a;margin-bottom:11px">'+weekdays[dt.getDay()]+' — '+fmtDate(today)+'</div>'+
     rows.join('')+'</div>';
 }
 
@@ -1862,7 +1839,7 @@ function saveStaff(id){
     emps.push({id:newId,emp_id:newId,name,email,password:pw,designation:document.getElementById('sm-desig').value,department:document.getElementById('sm-dept').value,phone:document.getElementById('sm-phone').value,date_of_birth:document.getElementById('sm-dob').value,joining_date:document.getElementById('sm-joining').value,employment_type:document.getElementById('sm-etype').value,role:'employee',is_admin:false,status_emoji:'😊',status_text:'Available',avatar_url:'',active:true,blocked:false});
     saveEmployees(emps);toast('✅ Employee added!');
   }
-  document.getElementById('staff-modal')?.remove();loadAdminStaff();
+  document.getElementById('staff-modal')?.remove();loadAdminStaff();loadBirthdays();loadAnniversaries();loadDashboard();
 }
 function resetStaffPw(id){
   const emp=getEmployees().find(function(e){return e.id===id;});
@@ -1870,7 +1847,7 @@ function resetStaffPw(id){
   const newPw=prompt('New password for '+emp.name+':');
   if(!newPw||newPw.length<6){if(newPw!==null)toast('Password must be at least 6 characters');return;}
   const emps=getEmployees();const idx=emps.findIndex(function(e){return e.id===id;});
-  emps[idx].password=newPw;saveEmployees(emps);toast('✅ Password reset for '+emp.name);
+  emps[idx].password=newPw;saveEmployees(emps);pushEmployee(emps[idx]).catch(function(){});toast('✅ Password reset for '+emp.name);
 }
 function toggleBlock(id,isBlocked){
   const emps=getEmployees();const idx=emps.findIndex(function(e){return e.id===id;});
@@ -2126,7 +2103,7 @@ function openFixAttendance(){
   document.body.appendChild(mo);
   document.getElementById('fix-close').onclick=function(){mo.remove();};
 }
-function saveFixAtt(){
+async function saveFixAtt(){
   const empId=document.getElementById('fix-emp').value;
   const date=document.getElementById('fix-date').value;
   const ci=document.getElementById('fix-ci').value;
@@ -2136,29 +2113,34 @@ function saveFixAtt(){
   if(!empId||!date){toast('Please select employee and date');return;}
   if(!note){toast('Admin note is required');return;}
   const att=getAttendance();
-  const idx=att.findIndex(function(a){return a.employee_id===empId&&a.date===date&&a.work_type==='Office';});
-  if(idx>=0){
-    if(ci)att[idx].check_in=ci+':00';
-    if(co)att[idx].check_out=co+':00';
-    att[idx].work_type=type;
-    att[idx].admin_fix=true;att[idx].admin_note=note;
-    saveAttendance(att);
-  } else {
-    att.push({id:Date.now()+'',employee_id:empId,date,check_in:ci?ci+':00':'',check_out:co?co+':00':'',work_type:type,status:'Fixed',admin_fix:true,admin_note:note,note:''});
-    saveAttendance(att);
-  }
+  const idx=att.findIndex(function(a){return a.employee_id===empId&&a.date===date;});
+  const recBase=idx>=0?att[idx]:{id:Date.now()+'',employee_id:empId,date,check_in:'',check_out:'',work_type:type||'Office',note:''};
+  if(ci)recBase.check_in=ci+':00';
+  if(co)recBase.check_out=co+':00';
+  recBase.work_type=type||recBase.work_type||'Office';
+  recBase.status=recBase.check_in?computeAttendanceStatus(recBase.check_in,recBase.work_type):'Absent';
+  recBase.admin_fix=true;
+  recBase.admin_note=note;
+  if(idx>=0)att[idx]=recBase;else att.unshift(recBase);
+  saveAttendance(att);
+  await saveAttendanceRec(recBase);
+  await fetchAttendance();
   document.getElementById('fix-att-modal')?.remove();
-  toast('✅ Attendance record fixed!');loadAdminToday();
+  toast('✅ Attendance record fixed!');
+  loadAttendanceTab();loadDashboard();loadAdminToday();
 }
-function clearAttRecord(){
+async function clearAttRecord(){
   const empId=document.getElementById('fix-emp').value;
   const date=document.getElementById('fix-date').value;
   const note=document.getElementById('fix-note').value;
   if(!empId||!date||!note){toast('Employee, date and note required');return;}
   const att=getAttendance().filter(function(a){return!(a.employee_id===empId&&a.date===date);});
   saveAttendance(att);
+  try{await getSB().from('attendance').delete().eq('employee_id',empId).eq('date',date);}catch(err){console.warn('clearAttRecord error:',err);}
+  await fetchAttendance();
   document.getElementById('fix-att-modal')?.remove();
-  toast('✅ Record cleared!');loadAdminToday();
+  toast('✅ Record cleared!');
+  loadAttendanceTab();loadDashboard();loadAdminToday();
 }
 function terminateEmployee(id){
   if(!confirm('Terminate this employee? They will lose portal access immediately.'))return;
@@ -2184,19 +2166,32 @@ function isAdmin(){return currentProfile&&(currentProfile.is_admin||currentProfi
 function todayStr(){const n=new Date();return n.getFullYear()+'-'+pad(n.getMonth()+1)+'-'+pad(n.getDate());}
 function fmtTime(t){if(!t)return'—';const p=t.split(':');return p[0]+':'+p[1];}
 function fmtDate(d){if(!d)return'—';const dt=new Date(d+'T00:00:00');const m=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];return dt.getDate()+' '+m[dt.getMonth()]+' '+dt.getFullYear();}
+function getMinutesFromTimeStr(t){
+  if(!t)return null;
+  const p=String(t).split(':');
+  const h=parseInt(p[0]||'0',10),m=parseInt(p[1]||'0',10);
+  return h*60+m;
+}
+function computeAttendanceStatus(ci,workType){
+  if(!ci)return 'Absent';
+  if(workType==='WFH'||workType==='OT-WFH')return 'WFH';
+  const s=getSettings();
+  const mins=getMinutesFromTimeStr(ci);
+  const onTime=getMinutesFromTimeStr(s.checkin_time||'10:00');
+  const lateAfter=getMinutesFromTimeStr(s.late_after||'10:20');
+  if(mins===null)return 'Absent';
+  if(mins<onTime)return 'Early';
+  if(mins<=lateAfter)return 'On Time';
+  if(mins<=670)return 'Short Leave AM';
+  return 'Late';
+}
 function isLate(r){
-  if(!r||r.status==='Absent'||r.work_type==='WFH'||r.work_type==='OT-WFH') return false;
-  return getAttLabel(r)==='Late';
+  return computeAttendanceStatus(r&&r.check_in,r&&r.work_type)==='Late';
 }
 function getAttLabel(r){
-  if(!r||!r.check_in) return 'Absent';
-  if(r.status==='Absent') return 'Absent';
-  if(r.work_type==='WFH'||r.work_type==='OT-WFH') return 'WFH';
-  if(r.status==='Short Leave AM') return 'Short Leave AM';
-  if(r.status==='Late') return 'Late';
-  if(r.status==='On Time') return 'On Time';
-  if(r.status==='Early') return 'Early';
-  return getPunchInStatusFromTime(r.check_in);
+  if(!r||!r.check_in)return 'Absent';
+  if(r.status==='Absent')return 'Absent';
+  return computeAttendanceStatus(r.check_in,r.work_type);
 }
 function getStatusLabel(r){
   if(!r)return'—';
