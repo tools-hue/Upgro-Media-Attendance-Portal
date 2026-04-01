@@ -2096,6 +2096,9 @@ function openFixAttendance(){
     '<div class="fld"><label>Check-out Type</label><select id="fix-co-type"><option>Office</option><option>WFH</option><option>OT-Office</option><option>OT-WFH</option></select></div>'+
     '</div>'+
     '<div class="fld"><label>Admin Note (Reason for Fix)</label><input id="fix-note" placeholder="e.g. GPS failure, system error..."/></div>'+
+    '<div style="background:#fef9c3;border-radius:8px;padding:10px;font-size:11px;color:#854d0e;margin-bottom:10px">'+
+    '💡 Select employee + date, then click <strong>Load Existing</strong> to see current record</div>'+
+    '<button onclick="loadExistingAtt()" style="width:100%;padding:10px;border-radius:10px;background:#f1f5f9;border:1px solid #e2e8f0;color:#334155;font-weight:700;cursor:pointer;margin-bottom:8px">📥 Load Existing Record</button>'+
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'+
     '<button onclick="clearAttRecord()" style="padding:12px;border-radius:11px;background:#fee2e2;border:none;color:#dc2626;font-weight:700;cursor:pointer">🗑️ Clear Record</button>'+
     '<button onclick="saveFixAtt()" style="padding:12px;border-radius:11px;background:linear-gradient(135deg,#4f46e5,#6366f1);border:none;color:#fff;font-weight:800;cursor:pointer">✅ Save Fix</button>'+
@@ -2103,54 +2106,127 @@ function openFixAttendance(){
   document.body.appendChild(mo);
   document.getElementById('fix-close').onclick=function(){mo.remove();};
 }
-function saveFixAtt(){
+async function saveFixAtt(){
   const empId=document.getElementById('fix-emp').value;
   const date=document.getElementById('fix-date').value;
   const ci=document.getElementById('fix-ci').value;
   const co=document.getElementById('fix-co').value;
   const note=document.getElementById('fix-note').value;
-  const type=document.getElementById('fix-ci-type').value;
-  if(!empId||!date){toast('Please select employee and date');return;}
-  if(!note){toast('Admin note is required');return;}
-  const att=getAttendance();
-  let recToSave;
-  const idx=att.findIndex(function(a){return a.employee_id===empId&&a.date===date;});
-  if(idx>=0){
-    if(ci)att[idx].check_in=ci+':00';
-    if(co)att[idx].check_out=co+':00';
-    att[idx].work_type=type;
-    att[idx].admin_fix=true;att[idx].admin_note=note;att[idx].note=note;
-    recToSave=att[idx];
-    saveAttendance(att);
-  } else {
-    recToSave={id:Date.now()+'',employee_id:empId,date:date,check_in:ci?ci+':00':'',check_out:co?co+':00':'',work_type:type,status:'Fixed',admin_fix:true,admin_note:note,note:note,lat:null,lon:null};
-    att.push(recToSave);
-    saveAttendance(att);
+  const ciType=document.getElementById('fix-ci-type').value;
+  const coType=document.getElementById('fix-co-type').value;
+  if(!empId||!date){toast('⚠️ Select employee and date');return;}
+  if(!ci){toast('⚠️ Check-in time required');return;}
+
+  // Show saving state
+  var saveBtn=document.querySelector('#fix-att-modal button[onclick="saveFixAtt()"]');
+  if(saveBtn){saveBtn.disabled=true;saveBtn.textContent='⏳ Saving...';}
+
+  try{
+    // Check if record exists in Supabase (not just cache)
+    var existing=await getSB().from('attendance').select('*')
+      .eq('employee_id',empId).eq('date',date).maybeSingle();
+
+    var rec;
+    if(existing&&existing.data){
+      // Update existing record
+      rec={
+        id:           existing.data.id,
+        employee_id:  empId,
+        date:         date,
+        check_in:     ci ? ci+':00' : existing.data.check_in,
+        check_out:    co ? co+':00' : (existing.data.check_out||null),
+        work_type:    ciType||'Office',
+        status:       'Fixed',
+        note:         note||null,
+        lat:          existing.data.lat||null,
+        lon:          existing.data.lon||null,
+        checkout_status: coType||existing.data.checkout_status||null,
+        checkout_lat: existing.data.checkout_lat||null,
+        checkout_lon: existing.data.checkout_lon||null,
+        late_minutes: 0,
+        overtime_minutes: 0
+      };
+    } else {
+      // New record
+      rec={
+        id:           Date.now()+'',
+        employee_id:  empId,
+        date:         date,
+        check_in:     ci ? ci+':00' : null,
+        check_out:    co ? co+':00' : null,
+        work_type:    ciType||'Office',
+        status:       'Fixed',
+        note:         note||null,
+        lat:          null, lon:null,
+        checkout_status: coType||null,
+        checkout_lat: null, checkout_lon:null,
+        late_minutes: 0, overtime_minutes: 0
+      };
+    }
+
+    // Direct upsert to Supabase
+    var result=await getSB().from('attendance').upsert(rec,{onConflict:'id'});
+    if(result.error) throw result.error;
+
+    // Update local cache
+    var allAtt=getData('attendance',[]);
+    var cIdx=allAtt.findIndex(function(a){return a.id===rec.id;});
+    if(cIdx>=0) allAtt[cIdx]=rec; else allAtt.push(rec);
+    setData('attendance',allAtt);
+
+    document.getElementById('fix-att-modal')?.remove();
+    toast('✅ Attendance saved to Supabase!');
+    loadAdminToday();
+
+  }catch(err){
+    console.error('saveFixAtt error:',err);
+    if(saveBtn){saveBtn.disabled=false;saveBtn.textContent='✅ Save Fix';}
+    toast('❌ Error: '+(err.message||'Check console'));
   }
-  // ✅ Push to Supabase immediately
-  pushAttendance(recToSave).then(function(){
-    toast('✅ Attendance fixed & synced!');
-  }).catch(function(){
-    toast('✅ Fixed locally (sync pending)');
-  });
-  document.getElementById('fix-att-modal')?.remove();
-  loadAdminToday();
 }
-function clearAttRecord(){
+async function loadExistingAtt(){
   const empId=document.getElementById('fix-emp').value;
   const date=document.getElementById('fix-date').value;
-  const note=document.getElementById('fix-note').value;
-  if(!empId||!date||!note){toast('Employee, date and note required');return;}
-  const allAtt=getAttendance();
-  const toDelete=allAtt.filter(function(a){return a.employee_id===empId&&a.date===date;});
-  const remaining=allAtt.filter(function(a){return!(a.employee_id===empId&&a.date===date);});
-  saveAttendance(remaining);
-  // ✅ Delete from Supabase
-  toDelete.forEach(function(rec){
-    getSB().from('attendance').delete().eq('id',rec.id).then(function(){}).catch(function(){});
-  });
-  document.getElementById('fix-att-modal')?.remove();
-  toast('✅ Record cleared & synced!');loadAdminToday();
+  if(!empId||!date){toast('⚠️ Select employee and date first');return;}
+  try{
+    var res=await getSB().from('attendance').select('*')
+      .eq('employee_id',empId).eq('date',date).maybeSingle();
+    if(res.data){
+      var r=res.data;
+      // Fill in the form
+      if(r.check_in){document.getElementById('fix-ci').value=r.check_in.substring(0,5);}
+      if(r.check_out){document.getElementById('fix-co').value=r.check_out.substring(0,5);}
+      if(r.work_type){document.getElementById('fix-ci-type').value=r.work_type;}
+      if(r.note){document.getElementById('fix-note').value=r.note;}
+      toast('✅ Existing record loaded! Edit and save.');
+    } else {
+      toast('ℹ️ No record found — will create new');
+    }
+  }catch(err){toast('❌ '+(err.message||'Error loading'));}
+}
+
+async function clearAttRecord(){
+  const empId=document.getElementById('fix-emp').value;
+  const date=document.getElementById('fix-date').value;
+  if(!empId||!date){toast('⚠️ Select employee and date');return;}
+  if(!confirm('Clear ALL attendance for this employee on '+date+'?'))return;
+  try{
+    // Delete from Supabase directly
+    var result=await getSB().from('attendance').delete()
+      .eq('employee_id',empId).eq('date',date);
+    if(result.error) throw result.error;
+    // Update local cache
+    var allAtt=getData('attendance',[]).filter(function(a){
+      return!(a.employee_id===empId&&a.date===date);
+    });
+    setData('attendance',allAtt);
+    document.getElementById('fix-att-modal')?.remove();
+    toast('✅ Record cleared!');
+    loadAdminToday();
+  }catch(err){
+    console.error('clearAttRecord error:',err);
+    toast('❌ Error: '+(err.message||'Check console'));
+  }
 }
 function terminateEmployee(id){
   if(!confirm('Terminate this employee? They will lose portal access immediately.'))return;
