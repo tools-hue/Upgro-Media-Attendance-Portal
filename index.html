@@ -783,7 +783,7 @@ function getEmployees(){
 function saveEmployees(arr){setData('employees',arr);}
 function getAttendance(){return getData('attendance',[]);}
 function saveAttendance(arr){setData('attendance',arr);}
-function saveAttendanceRec(rec){pushAttendance(rec);}
+function saveAttendanceRec(rec){return pushAttendance(rec);}
 function getLeaves(){return getData('leaves',[]);}
 function saveLeaves(arr){setData('leaves',arr);}
 function saveLeaveRec(rec){pushLeave(rec);}
@@ -1121,7 +1121,28 @@ function updateGPSBox(state,msg){
   else{box.style.background='#f8fafc';box.style.borderColor='#e2e8f0';if(ic)ic.textContent='📍';if(txt){txt.textContent=msg;txt.style.color='#64748b';}}
 }
 
-function doPunchAfterGPS(type,lat,lon){
+
+async function refreshAttendanceViews(){
+  try{
+    await fetchAttendance();
+  }catch(e){}
+  loadAttendanceTab();
+  loadDashboard();
+
+  const adminTab=document.getElementById('tab-admin');
+  const adminOpen=adminTab&&adminTab.style.display!=='none';
+  if(adminOpen||isAdmin()){
+    const activeAtab=document.querySelector('.atab.on');
+    const tabId=activeAtab&&activeAtab.dataset&&activeAtab.dataset.tab?activeAtab.dataset.tab:'today';
+    if(tabId==='records'&&typeof loadRecords==='function') loadRecords();
+    else if(tabId==='leaves'&&typeof loadAdminLeaves==='function') loadAdminLeaves();
+    else if(tabId==='ot'&&typeof loadAdminOT==='function') loadAdminOT();
+    else if(tabId==='staff'&&typeof loadAdminStaff==='function') loadAdminStaff();
+    else loadAdminToday();
+  }
+}
+
+async function doPunchAfterGPS(type,lat,lon){
   const s=getSettings();
   const offLat=parseFloat(s.office_lat||'0');
   const offLon=parseFloat(s.office_lng||'0');
@@ -1157,7 +1178,7 @@ function doPunchAfterGPS(type,lat,lon){
     const newRec={id:Date.now()+'',employee_id:currentProfile.id,date:today,check_in:time,check_out:'',work_type:'Office',status:status,note:'',lat:lat,lon:lon};
     att.push(newRec);
     saveAttendance(att);
-    saveAttendanceRec(newRec);
+    await saveAttendanceRec(newRec);
     toast('✅ Checked In at '+time+(late?' — Late!':''));
   } else {
     const idx=att.findIndex(function(a){return a.employee_id===currentProfile.id&&a.date===today&&a.work_type==='Office'&&!a.check_out;});
@@ -1169,10 +1190,10 @@ function doPunchAfterGPS(type,lat,lon){
     else if(h===18&&m<=10) att[idx].checkout_status='Normal Exit';
     else att[idx].checkout_status='Overtime';
     saveAttendance(att);
-    saveAttendanceRec(att[idx]);
+    await saveAttendanceRec(att[idx]);
     toast('✅ Checked Out at '+time);
   }
-  loadAttendanceTab();loadDashboard();
+  await refreshAttendanceViews();
 }
 
 function punch(type){
@@ -1219,7 +1240,7 @@ function toggleWFH(){
   else{b.style.display='none';btn.textContent='Mark →';}
 }
 function setWT(btn){document.querySelectorAll('.wfh-type-btn').forEach(b=>b.classList.remove('on'));btn.classList.add('on');wfhType=btn.dataset.t;}
-function punchWFH(type){
+async function punchWFH(type){
   const now=new Date();const today=todayStr();
   const time=pad(now.getHours())+':'+pad(now.getMinutes())+':'+pad(now.getSeconds());
   const note=document.getElementById('wfh-note').value;
@@ -1231,7 +1252,7 @@ function punchWFH(type){
     const wfhRec={id:Date.now()+'',employee_id:currentProfile.id,date:today,check_in:time,check_out:'',work_type:wfhType,status:absent?'Absent':'WFH',salary_deduction:absent,note:note||''};
     att.push(wfhRec);
     saveAttendance(att);
-    saveAttendanceRec(wfhRec);
+    await saveAttendanceRec(wfhRec);
     const wfhCI=document.getElementById('btn-wfh-ci');const wfhCO=document.getElementById('btn-wfh-co');
     wfhCI.textContent='✅ WFH In '+fmtTime(time);
     wfhCO.disabled=false;wfhCO.style.background='linear-gradient(135deg,#ef4444,#dc2626)';wfhCO.style.color='#fff';
@@ -1239,9 +1260,12 @@ function punchWFH(type){
   } else {
     const idx=att.findIndex(a=>a.employee_id===currentProfile.id&&a.date===today&&a.work_type===wfhType&&!a.check_out);
     if(idx===-1){toast('WFH check-in not found!');return;}
-    att[idx].check_out=time;saveAttendance(att);toast('✅ WFH Checked Out at '+time);
+    att[idx].check_out=time;
+    saveAttendance(att);
+    await saveAttendanceRec(att[idx]);
+    toast('✅ WFH Checked Out at '+time);
   }
-  loadDashboard();
+  await refreshAttendanceViews();
 }
 
 /* ══ STATUS ═══════════════════════════════════════════════ */
@@ -1724,7 +1748,7 @@ function loadAdminToday(){
     '<div style="background:#fff;border-radius:14px;padding:14px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.06)"><div style="font-size:26px;font-weight:800;color:#f59e0b">'+late+'</div><div style="font-size:10px;color:#64748b;margin-top:2px">Late</div></div>'+
     '</div>'+
     '<div style="background:#fff;border-radius:14px;padding:14px;box-shadow:0 2px 8px rgba(0,0,0,.06)">'+
-    '<div style="font-weight:700;font-size:13px;color:#0f172a;margin-bottom:11px">Tuesday, 24 March — '+fmtDate(today)+'</div>'+
+    '<div style="font-weight:700;font-size:13px;color:#0f172a;margin-bottom:11px">'+fmtDate(today)+'</div>'+
     rows.join('')+'</div>';
 }
 
