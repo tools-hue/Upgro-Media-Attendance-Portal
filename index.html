@@ -499,9 +499,17 @@ button{cursor:pointer}
     <div id="tab-profile" class="nav-tab" style="display:none">
       <div class="card">
         <div style="text-align:center;padding:8px 0 14px">
-          <div class="av-upload-ring" onclick="openAvatarCrop()" style="margin:0 auto 11px;display:inline-block">
-            <div class="av" id="profile-av" style="width:76px;height:76px;font-size:26px;background:#e11d48"></div>
-            <div class="av-upload-overlay">📷</div>
+          <div style="position:relative;display:inline-block;margin:0 auto 11px">
+            <div class="av-upload-ring" onclick="openAvatarCrop()" style="display:inline-block">
+              <div class="av" id="profile-av" style="width:76px;height:76px;font-size:26px;background:#e11d48"></div>
+              <div class="av-upload-overlay">📷</div>
+            </div>
+            <button id="remove-av-btn" onclick="removeAvatar()" title="Remove photo"
+              style="display:none;position:absolute;top:-4px;right:-4px;width:22px;height:22px;border-radius:50%;background:#e11d48;color:#fff;border:2px solid #fff;font-size:11px;cursor:pointer;line-height:1;z-index:10;padding:0">✕</button>
+          </div>
+          <div style="display:flex;gap:8px;justify-content:center;margin-bottom:4px">
+            <button onclick="openAvatarCrop()" style="font-size:11px;padding:5px 12px;border-radius:8px;border:1px solid #e2e8f0;background:#f8fafc;color:#334155;cursor:pointer;font-weight:600">📷 Change Photo</button>
+            <button id="remove-av-btn2" onclick="removeAvatar()" style="display:none;font-size:11px;padding:5px 12px;border-radius:8px;border:1px solid #fecaca;background:#fef2f2;color:#e11d48;cursor:pointer;font-weight:600">🗑 Remove</button>
           </div>
           <div style="font-weight:800;font-size:17px;color:#0f172a;font-family:'Space Grotesk',sans-serif" id="profile-name"></div>
           <div style="font-size:11px;color:#64748b;margin-top:2px" id="profile-meta"></div>
@@ -581,23 +589,37 @@ async function fetchEmployees(){
         if(e.date_of_birth)e.date_of_birth=e.date_of_birth.substring(0,10);
         if(e.joining_date)e.joining_date=e.joining_date.substring(0,10);
       });
-      // ✅ FIX: Merge avatar_url and status from Supabase into local cache
-      // If Supabase has avatar, use it. If local has it but Supabase doesn't, push to Supabase.
+      // Merge: add any hardcoded employees missing from Supabase
+      const hardcodedEmps=getEmployees();
+      let changed=false;
+      hardcodedEmps.forEach(function(hEmp){
+        if(!data.find(function(d){return d.id===hEmp.id;})){
+          data.push(hEmp);
+          getSB().from('employees').upsert(hEmp,{onConflict:'id'}).catch(function(){});
+          changed=true;
+        }
+      });
+      // Preserve avatars from local cache
       const localEmps=getData('employees',[]);
       data.forEach(function(sbEmp){
-        const localEmp=localEmps.find(function(l){return l.id===sbEmp.id;});
-        if(localEmp&&localEmp.avatar_url&&!sbEmp.avatar_url){
-          // Local has avatar but Supabase doesn't — push to Supabase (fire and forget)
-          sbEmp.avatar_url=localEmp.avatar_url;
-          getSB().from('employees').upsert(sbEmp,{onConflict:'id'}).then(function(){}).catch(function(){});
-        }
-        // Merge status fields from Supabase (they take priority)
+        const loc=localEmps.find(function(l){return l.id===sbEmp.id;});
+        if(loc&&loc.avatar_url&&!sbEmp.avatar_url){sbEmp.avatar_url=loc.avatar_url;}
       });
       setData('employees',data);
       return data;
     }
   }catch(err){console.warn('fetchEmployees error:',err);}
-  return getData('employees',null);
+  // Supabase returned empty or failed — use local/hardcoded AND seed Supabase
+  const localEmps = getData('employees', null);
+  const empsToUse = localEmps && localEmps.length ? localEmps : getEmployees();
+  if(empsToUse && empsToUse.length){
+    // Seed Supabase in background (fire and forget)
+    empsToUse.forEach(function(emp){
+      getSB().from('employees').upsert(emp,{onConflict:'id'}).catch(function(){});
+    });
+    setData('employees', empsToUse);
+  }
+  return empsToUse;
 }
 
 async function fetchAttendance(){
@@ -632,7 +654,25 @@ async function fetchSettings(){
 
 async function pushAttendance(rec){
   try{
-    const {error}=await getSB().from('attendance').upsert(rec,{onConflict:'id'});
+    // Map to Supabase column names (handles extra local fields)
+    const sbRec={
+      id:          rec.id,
+      employee_id: rec.employee_id,
+      date:        rec.date,
+      check_in:    rec.check_in  || null,
+      check_out:   rec.check_out || null,
+      status:      rec.status    || null,
+      work_type:   rec.work_type || 'Office',
+      note:        rec.note      || rec.notes || null,
+      lat:         rec.lat       || null,
+      lon:         rec.lon       || null,
+      checkout_status: rec.checkout_status || null,
+      checkout_lat:    rec.checkout_lat    || null,
+      checkout_lon:    rec.checkout_lon    || null,
+      late_minutes:    rec.late_minutes    || 0,
+      overtime_minutes:rec.overtime_minutes|| 0
+    };
+    const {error}=await getSB().from('attendance').upsert(sbRec,{onConflict:'id'});
     if(error)throw error;
   }catch(err){console.warn('pushAttendance error:',err);}
   // always update local cache
@@ -681,28 +721,34 @@ async function syncFromSupabase(){
 
 function getEmployees(){
   let emps=getData('employees',null);
+  // Force refresh if employee count is less than expected (new employees added)
+  if(emps && emps.length < 20){
+    emps=null; // Clear cache, use hardcoded
+    setData('employees',null);
+  }
   if(!emps){
     emps=[
-      {id:'1001',emp_id:'1001',name:'Ritu Tyagi',email:'ritutyagiea@upgromedia.com',password:'Ritu@1001',designation:'EA',department:'Admin',role:'admin',is_admin:true,joining_date:'',date_of_birth:'2026-07-14',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
-      {id:'1002',emp_id:'1002',name:'Vishal Srivastava',email:'vishal.editor@upgromedia.com',password:'Vishal@1002',designation:'Video Editor',department:'Production',role:'employee',is_admin:false,joining_date:'',date_of_birth:'2025-12-22',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
-      {id:'1003',emp_id:'1003',name:'Ankit Prajapati',email:'ankit.seo@upgromedia.com',password:'Ankit@1003',designation:'SEO Executive',department:'Marketing',role:'employee',is_admin:false,joining_date:'',date_of_birth:'2026-03-28',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
-      {id:'1004',emp_id:'1004',name:'Harsh Kumar',email:'harsh.graphic@upgromedia.com',password:'Harsh@1004',designation:'Graphic Designer',department:'Design',role:'employee',is_admin:false,joining_date:'',date_of_birth:'2026-08-09',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
-      {id:'1005',emp_id:'1005',name:'Vikas Pandey',email:'vikasvideoedit@upgromedia.com',password:'Vikas@1005',designation:'Video Editor',department:'Production',role:'employee',is_admin:false,joining_date:'',date_of_birth:'2026-09-18',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
-      {id:'1006',emp_id:'1006',name:'Abhishek Kasaudhan',email:'abhishek.meta@upgromedia.com',password:'Abhishek@1006',designation:'Meta Media Buyer',department:'Marketing',role:'employee',is_admin:false,joining_date:'',date_of_birth:'2025-11-26',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
-      {id:'1007',emp_id:'1007',name:'Harsh Verma',email:'harsh.editor@upgromedia.com',password:'Harsh@1007',designation:'Video Editor',department:'Production',role:'employee',is_admin:false,joining_date:'',date_of_birth:'2026-07-27',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
-      {id:'1008',emp_id:'1008',name:'Dharmendra Sharma',email:'dharmendra.web@upgromedia.com',password:'Dharmendra@1008',designation:'Web Developer',department:'Tech',role:'employee',is_admin:false,joining_date:'',date_of_birth:'2026-06-14',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
-      {id:'1009',emp_id:'1009',name:'Palak Gupta',email:'palak.intern@upgromedia.com',password:'Palak@1009',designation:'Intern',department:'Admin',role:'employee',is_admin:false,joining_date:'',date_of_birth:'2026-06-02',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
-      {id:'1010',emp_id:'1010',name:'Adarsh Srivastava',email:'adarsh.web@upgromedia.com',password:'Adarsh@1010',designation:'Web Developer',department:'Tech',role:'employee',is_admin:false,joining_date:'',date_of_birth:'2026-07-10',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
-      {id:'1011',emp_id:'1011',name:'Arpit Yadav',email:'arpit@upgromedia.com',password:'Arpit@1011',designation:'Accountant',department:'Finance',role:'employee',is_admin:false,joining_date:'',date_of_birth:'2026-09-18',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
-      {id:'1012',emp_id:'1012',name:'Adarsh Singh',email:'adarsh.mis@upgromedia.com',password:'Adarsh@1012',designation:'MIS',department:'Admin',role:'admin',is_admin:true,joining_date:'',date_of_birth:'2026-07-12',status_emoji:'💻',status_text:'Working',avatar_url:'',active:true},
-      {id:'1013',emp_id:'1013',name:'Dheeraj Sir',email:'dhiraj.jaiswal@upgromedia.com',password:'Dheeraj@1013',designation:'CEO',department:'Admin',role:'admin',is_admin:true,joining_date:'',date_of_birth:'2026-07-24',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
-      {id:'1014',emp_id:'1014',name:'Junaid',email:'junaid@upgromedia.com',password:'Junaid@1014',designation:'Google Ads Expert',department:'Marketing',role:'employee',is_admin:false,joining_date:'',date_of_birth:'2026-05-11',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
-      {id:'1015',emp_id:'1015',name:'Neeraj Kumar Yadav',email:'neeraj.meta@upgromedia.com',password:'Neeraj@1015',designation:'Meta Media Buyer',department:'Marketing',role:'employee',is_admin:false,joining_date:'',date_of_birth:'2026-07-27',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
-      {id:'1016',emp_id:'1016',name:'Chandrakala Waldia',email:'chnadrakala.meta@upgromedia.com',password:'Chandrakala@1016',designation:'Meta Media Buyer',department:'Marketing',role:'employee',is_admin:false,joining_date:'',date_of_birth:'2026-07-01',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
-      {id:'1017',emp_id:'1017',name:'Tarun Verma',email:'vraj9424@gmail.com',password:'Tarun@1017',designation:'Tech',department:'Tech',role:'admin',is_admin:true,joining_date:'',date_of_birth:'2026-05-06',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
-      {id:'1018',emp_id:'1018',name:'Muskan Agarwal',email:'muskan.crm@upgromedia.com',password:'Muskan@1018',designation:'Client Relationship Manager',department:'Marketing',role:'employee',is_admin:false,joining_date:'',date_of_birth:'2026-10-29',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
-      {id:'1019',emp_id:'1019',name:'Aditya Sharma',email:'aditya.googleads@upgromedia.com',password:'Aditya@1019',designation:'Google Ads Executive',department:'Marketing',role:'employee',is_admin:false,joining_date:'',date_of_birth:'',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
-    ];
+  {id:'1001',emp_id:'1001',name:'Ritu Tyagi',email:'ritutyagiea@upgromedia.com',password:'Ritu@1001',designation:'Executive Assistant',department:'Admin',role:'admin',is_admin:true,joining_date:'',date_of_birth:'',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
+  {id:'1002',emp_id:'1002',name:'Vishal Srivastava',email:'vishal.editor@upgromedia.com',password:'Vishal@1002',designation:'Video Editor',department:'Production',role:'employee',is_admin:false,joining_date:'',date_of_birth:'',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
+  {id:'1003',emp_id:'1003',name:'Ankit Prajapati',email:'ankit.seo@upgromedia.com',password:'Ankit@1003',designation:'SEO Executive',department:'Marketing',role:'employee',is_admin:false,joining_date:'',date_of_birth:'',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
+  {id:'1004',emp_id:'1004',name:'Harsh Kumar',email:'harsh.graphic@upgromedia.com',password:'Harsh@1004',designation:'Graphic Designer',department:'Design',role:'employee',is_admin:false,joining_date:'',date_of_birth:'',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
+  {id:'1005',emp_id:'1005',name:'Vikas Pandey',email:'vikasvideoedit@upgromedia.com',password:'Vikas@1005',designation:'Video Editor',department:'Production',role:'employee',is_admin:false,joining_date:'',date_of_birth:'',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
+  {id:'1006',emp_id:'1006',name:'Abhishek Kasaudhan',email:'abhishek.meta@upgromedia.com',password:'Abhishek@1006',designation:'Meta Media Buyer',department:'Marketing',role:'employee',is_admin:false,joining_date:'',date_of_birth:'',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
+  {id:'1007',emp_id:'1007',name:'Harsh Verma',email:'harsh.editor@upgromedia.com',password:'Harsh@1007',designation:'Video Editor',department:'Production',role:'employee',is_admin:false,joining_date:'',date_of_birth:'',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
+  {id:'1008',emp_id:'1008',name:'Dharmendra Sharma',email:'dharmendra.web@upgromedia.com',password:'Dharmendra@1008',designation:'Web Developer',department:'Tech',role:'employee',is_admin:false,joining_date:'',date_of_birth:'',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
+  {id:'1010',emp_id:'1010',name:'Adarsh Srivastava',email:'adarsh.web@upgromedia.com',password:'Adarsh@1010',designation:'Web Developer',department:'Tech',role:'employee',is_admin:false,joining_date:'',date_of_birth:'',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
+  {id:'1011',emp_id:'1011',name:'Arpit Yadav',email:'arpit@upgromedia.com',password:'Arpit@1011',designation:'Accountant',department:'Finance',role:'employee',is_admin:false,joining_date:'',date_of_birth:'',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
+  {id:'1012',emp_id:'1012',name:'Adarsh Singh',email:'adarsh.mis@upgromedia.com',password:'Adarsh@1012',designation:'MIS',department:'Admin',role:'admin',is_admin:true,joining_date:'',date_of_birth:'',status_emoji:'💻',status_text:'Working',avatar_url:'',active:true},
+  {id:'1013',emp_id:'1013',name:'Dheeraj Sir',email:'dhiraj.jaiswal@upgromedia.com',password:'Dheeraj@1013',designation:'CEO',department:'Admin',role:'admin',is_admin:true,joining_date:'',date_of_birth:'',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
+  {id:'1015',emp_id:'1015',name:'Neeraj Kumar Yadav',email:'neeraj.meta@upgromedia.com',password:'Neeraj@1015',designation:'Meta Media Buyer',department:'Marketing',role:'employee',is_admin:false,joining_date:'',date_of_birth:'',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
+  {id:'1016',emp_id:'1016',name:'Chandrakala Waldia',email:'chnadrakala.meta@upgromedia.com',password:'Chandrakala@1016',designation:'Meta Media Buyer',department:'Marketing',role:'employee',is_admin:false,joining_date:'',date_of_birth:'',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
+  {id:'1017',emp_id:'1017',name:'Tarun Verma',email:'vraj9424@gmail.com',password:'Tarun@1017',designation:'Tech Lead',department:'Tech',role:'admin',is_admin:true,joining_date:'',date_of_birth:'',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
+  {id:'1018',emp_id:'1018',name:'Muskan Agarwal',email:'muskan.crm@upgromedia.com',password:'Muskan@1018',designation:'CRM Executive',department:'CRM',role:'employee',is_admin:false,joining_date:'',date_of_birth:'',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
+  {id:'1019',emp_id:'1019',name:'Aditya Sharma',email:'aditya.googleads@upgromedia.com',password:'Aditya@1019',designation:'Google Ads Expert',department:'Marketing',role:'employee',is_admin:false,joining_date:'',date_of_birth:'',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
+  {id:'1020',emp_id:'1020',name:'Ranveer Singh',email:'ranveer.copywriter@upgromedia.com',password:'Ranveer@1020',designation:'Copywriter',department:'Content',role:'employee',is_admin:false,joining_date:'',date_of_birth:'',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
+  {id:'1021',emp_id:'1021',name:'Surya Pratap Singh',email:'surya.meta@upgromedia.com',password:'Surya@1021',designation:'Meta Media Buyer',department:'Marketing',role:'employee',is_admin:false,joining_date:'',date_of_birth:'',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
+  {id:'1022',emp_id:'1022',name:'Subhi Singh',email:'subhi.meta@upgromedia.com',password:'Subhi@1022',designation:'Meta Media Buyer',department:'Marketing',role:'employee',is_admin:false,joining_date:'',date_of_birth:'',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true}
+];
     setData('employees',emps);
   }
   return emps;
@@ -724,14 +770,7 @@ let cropImg=null,cropOffX=0,cropOffY=0,cropZoom=1,cropDragging=false,cropLastX=0
 // Safety: hide loading after 5s if something goes wrong
 setTimeout(function(){var ls=document.getElementById("loading-screen");if(ls&&ls.style.display!=="none"){showLogin();}},5000);
 window.onload=function(){
-  const sess=getData('session',null);
-  if(sess){
-    currentUser=sess;
-    const emps=getEmployees();
-    currentProfile=emps.find(e=>e.id===sess.id)||null;
-    if(currentProfile&&currentProfile.active!==false){showMain();}
-    else{setData('session',null);try{localStorage.removeItem('ugm_session');}catch(e){};showLogin();}
-  } else {showLogin();}
+  // Always show login — initPortal handles everything
 };
 
 /* ══ CLOCK ════════════════════════════════════════════════ */
@@ -1119,7 +1158,7 @@ function setStatus(btn){
   const emoji=btn.dataset.e;const text=btn.dataset.t;
   document.getElementById('status-modal')?.remove();
   const emps=getEmployees();const idx=emps.findIndex(e=>e.id===currentProfile.id);
-  emps[idx].status_emoji=emoji;emps[idx].status_text=text;saveEmployees(emps);pushEmployee(emps[idx]).catch(function(){});
+  emps[idx].status_emoji=emoji;emps[idx].status_text=text;saveEmployees(emps);
   currentProfile.status_emoji=emoji;currentProfile.status_text=text;
   ['dash','profile'].forEach(function(p){
     const ee=document.getElementById(p+'-status-emoji');const te=document.getElementById(p+'-status-text');
@@ -1193,6 +1232,26 @@ function updateCrop(){
   ctx.drawImage(cropImg,cropOffX,cropOffY,cropImg.width*cropZoom,cropImg.height*cropZoom);
 }
 function closeCropModal(){document.getElementById('crop-modal-ov').classList.remove('open');cropImg=null;}
+function removeAvatar(){
+  if(!currentProfile) return;
+  const emps=getEmployees();
+  const idx=emps.findIndex(e=>e.id===currentProfile.id);
+  if(idx<0) return;
+  emps[idx].avatar_url='';
+  saveEmployees(emps);
+  currentProfile.avatar_url='';
+  // Push to Supabase
+  pushEmployee(emps[idx]).catch(function(){});
+  // Update UI
+  setAvatarEls(currentProfile);
+  // Hide remove buttons
+  const rb=$('remove-av-btn'); if(rb) rb.style.display='none';
+  const rb2=$('remove-av-btn2'); if(rb2) rb2.style.display='none';
+  toast('✅ Profile photo removed');
+}
+
+function $r(id){return document.getElementById(id);}
+
 function saveCroppedAvatar(){
   if(!cropImg)return;
   const canvas=document.getElementById('crop-canvas');const size=canvas.width;
@@ -1213,6 +1272,11 @@ function setAvatarEls(profile){
     const el=document.getElementById(id);if(!el)return;
     el.innerHTML=url?'<img src="'+url+'" style="width:100%;height:100%;object-fit:cover;border-radius:50%"/>':init;
   });
+  // Show/hide remove buttons based on whether photo exists
+  const rb=document.getElementById('remove-av-btn');
+  const rb2=document.getElementById('remove-av-btn2');
+  if(rb)  rb.style.display  = url ? 'flex' : 'none';
+  if(rb2) rb2.style.display = url ? 'inline-block' : 'none';
 }
 function avatarHtml(emp,size,fs){
   const url=emp.avatar_url||'';const nm=emp.name||'?';
@@ -1662,11 +1726,13 @@ function resetStaffPw(id){
 function toggleBlock(id,isBlocked){
   const emps=getEmployees();const idx=emps.findIndex(function(e){return e.id===id;});
   emps[idx].blocked=!isBlocked;saveEmployees(emps);
+  pushEmployee(emps[idx]).catch(function(){});
   toast(!isBlocked?'🔒 Employee blocked':'🔓 Employee unblocked');loadAdminStaff();
 }
 function toggleActive(id,isInactive){
   const emps=getEmployees();const idx=emps.findIndex(function(e){return e.id===id;});
   emps[idx].active=isInactive;saveEmployees(emps);
+  pushEmployee(emps[idx]).catch(function(){});
   toast(isInactive?'✅ Employee activated':'⛔ Employee deactivated');loadAdminStaff();
 }
 
@@ -2011,24 +2077,14 @@ function statusClass(r){
 
 /* ══ START APP ════════════════════════════════════════════ */
 function initPortal(){
-  // Sync from Supabase in background
-  syncFromSupabase().then(function(){
-    // Refresh UI if already logged in
-    if(currentProfile){loadDashboard();}
-  });
-  try{
-    var sess=getData('session',null);
-    if(sess&&sess.id&&sess.email){
-      var emps=getEmployees();
-      var found=emps.find(function(e){return e.id===sess.id&&e.email===sess.email;});
-      if(found&&found.active!==false&&!found.blocked){
-        currentUser=found;currentProfile=found;showMain();return;
-      }
-    }
-    // Clear invalid session
-    try{localStorage.removeItem('ugm_session');}catch(x){}
-    setData('session',null);
-  }catch(e){console.warn('Init error:',e);}
+  // ✅ FIX: Always clear session — show login page first every time
+  // Sync employees from Supabase in background (for fresh data)
+  try{localStorage.removeItem('ugm_session');}catch(x){}
+  setData('session',null);
+  currentUser=null;
+  currentProfile=null;
+  // Fetch employees in background so login is fast
+  syncFromSupabase().catch(function(){});
   showLogin();
 }
 if(document.readyState==='loading'){
