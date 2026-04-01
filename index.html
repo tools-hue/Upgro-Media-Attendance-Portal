@@ -2051,65 +2051,205 @@ function renderSettings(){
 }
 
 function openFixAttendance(){
-  const mo=document.createElement('div');mo.className='modal-cen-ov';mo.id='fix-att-modal';
-  const emps=getEmployees().filter(function(e){return e.active!==false;});
-  mo.innerHTML='<div class="modal-cen" style="max-width:420px">'+
-    '<div class="mhdr"><div class="mtitle">Fix Attendance Record</div><button class="mclose" id="fix-close">✕</button></div>'+
-    '<div class="fix-att-warn">⚠️ Admin action — use only to correct genuine check-in / check-out errors.</div>'+
-    '<div class="fld"><label>Employee</label><select id="fix-emp">'+
+  var mo=document.createElement('div');mo.className='modal-cen-ov';mo.id='fix-att-modal';
+  var emps=getEmployees().filter(function(e){return e.active!==false;});
+  mo.innerHTML=
+    '<div class="modal-cen" style="max-width:420px">'+
+    '<div class="mhdr"><div class="mtitle">🔧 Fix Attendance</div><button class="mclose" id="fix-close">✕</button></div>'+
+    '<div class="fix-att-warn">⚠️ Admin only — select employee + date, record will auto-fill below.</div>'+
+    '<div id="fix-err" style="background:#fee2e2;color:#991b1b;border-radius:9px;padding:9px 13px;margin-bottom:11px;font-size:12px;font-weight:600;display:none"></div>'+
+    '<div id="fix-ok" style="background:#dcfce7;color:#166534;border-radius:9px;padding:9px 13px;margin-bottom:11px;font-size:12px;font-weight:600;display:none"></div>'+
+    '<div class="fld"><label>Employee *</label>'+
+    '<select id="fix-emp" onchange="loadExistingRecord()">'+
     '<option value="">— Select Employee —</option>'+
     emps.map(function(e){return '<option value="'+e.id+'">'+e.name+' (EMP-'+e.emp_id+')</option>';}).join('')+
     '</select></div>'+
-    '<div class="fld"><label>Date</label><input id="fix-date" type="date" value="'+todayStr()+'"/></div>'+
+    '<div class="fld"><label>Date *</label>'+
+    '<input id="fix-date" type="date" value="'+todayStr()+'" onchange="loadExistingRecord()"/></div>'+
+    '<div id="fix-existing-info" style="display:none;background:#f0f4f8;border-radius:10px;padding:10px;margin-bottom:11px;font-size:11px;color:#475569;font-weight:600;line-height:1.7"></div>'+
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'+
     '<div class="fld"><label>Check-in Time</label><input id="fix-ci" type="time"/></div>'+
-    '<div class="fld"><label>Check-in Type</label><select id="fix-ci-type"><option>Office</option><option>WFH</option><option>OT-Office</option><option>OT-WFH</option></select></div>'+
+    '<div class="fld"><label>Work Type</label>'+
+    '<select id="fix-ci-type"><option>Office</option><option>WFH</option><option>OT-Office</option><option>OT-WFH</option></select></div>'+
     '</div>'+
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'+
     '<div class="fld"><label>Check-out Time</label><input id="fix-co" type="time"/></div>'+
-    '<div class="fld"><label>Check-out Type</label><select id="fix-co-type"><option>Office</option><option>WFH</option><option>OT-Office</option><option>OT-WFH</option></select></div>'+
+    '<div class="fld"><label>Checkout Status</label>'+
+    '<select id="fix-co-status"><option value="">Auto-detect</option><option>Normal Exit</option><option>Short Leave PM</option><option>Half Day</option><option>Overtime</option></select></div>'+
     '</div>'+
-    '<div class="fld"><label>Admin Note (Reason for Fix)</label><input id="fix-note" placeholder="e.g. GPS failure, system error..."/></div>'+
+    '<div class="fld"><label>Admin Note (Reason) *</label>'+
+    '<input id="fix-note" placeholder="e.g. GPS failure, system error..."/></div>'+
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'+
-    '<button onclick="clearAttRecord()" style="padding:12px;border-radius:11px;background:#fee2e2;border:none;color:#dc2626;font-weight:700;cursor:pointer">🗑️ Clear Record</button>'+
-    '<button onclick="saveFixAtt()" style="padding:12px;border-radius:11px;background:linear-gradient(135deg,#4f46e5,#6366f1);border:none;color:#fff;font-weight:800;cursor:pointer">✅ Save Fix</button>'+
+    '<button onclick="clearAttRecord()" style="padding:12px;border-radius:11px;background:#fee2e2;border:1px solid #fca5a5;color:#dc2626;font-weight:700;cursor:pointer;font-size:12px">🗑️ Clear Record</button>'+
+    '<button id="fix-save-btn" onclick="saveFixAtt()" style="padding:12px;border-radius:11px;background:linear-gradient(135deg,#4f46e5,#6366f1);border:none;color:#fff;font-weight:800;cursor:pointer;font-size:12px">✅ Save Fix</button>'+
     '</div></div>';
   document.body.appendChild(mo);
   document.getElementById('fix-close').onclick=function(){mo.remove();};
 }
-function saveFixAtt(){
-  const empId=document.getElementById('fix-emp').value;
-  const date=document.getElementById('fix-date').value;
-  const ci=document.getElementById('fix-ci').value;
-  const co=document.getElementById('fix-co').value;
-  const note=document.getElementById('fix-note').value;
-  const type=document.getElementById('fix-ci-type').value;
-  if(!empId||!date){toast('Please select employee and date');return;}
-  if(!note){toast('Admin note is required');return;}
-  const att=getAttendance();
-  const idx=att.findIndex(function(a){return a.employee_id===empId&&a.date===date&&a.work_type==='Office';});
-  if(idx>=0){
-    if(ci)att[idx].check_in=ci+':00';
-    if(co)att[idx].check_out=co+':00';
-    att[idx].work_type=type;
-    att[idx].admin_fix=true;att[idx].admin_note=note;
-    saveAttendance(att);
-  } else {
-    att.push({id:Date.now()+'',employee_id:empId,date,check_in:ci?ci+':00':'',check_out:co?co+':00':'',work_type:type,status:'Fixed',admin_fix:true,admin_note:note,note:''});
-    saveAttendance(att);
+
+function loadExistingRecord(){
+  var empId=document.getElementById('fix-emp').value;
+  var date=document.getElementById('fix-date').value;
+  var info=document.getElementById('fix-existing-info');
+  var ciEl=document.getElementById('fix-ci');
+  var coEl=document.getElementById('fix-co');
+  var typeEl=document.getElementById('fix-ci-type');
+  var coStEl=document.getElementById('fix-co-status');
+  if(!info)return;
+  if(ciEl)ciEl.value='';
+  if(coEl)coEl.value='';
+  if(typeEl)typeEl.value='Office';
+  if(coStEl)coStEl.value='';
+  if(!empId||!date){info.style.display='none';return;}
+  var att=getAttendance();
+  var recs=att.filter(function(a){return String(a.employee_id)===String(empId)&&a.date===date;});
+  if(!recs.length){
+    info.style.display='block';
+    info.innerHTML='📭 No record found for this date — a new record will be created.';
+    return;
   }
-  document.getElementById('fix-att-modal')?.remove();
-  toast('✅ Attendance record fixed!');loadAdminToday();
+  var rec=recs.find(function(r){return r.work_type==='Office';})||recs[0];
+  info.style.display='block';
+  info.innerHTML='📋 Existing: IN: <strong>'+(rec.check_in?fmtTime(rec.check_in):'—')+'</strong> OUT: <strong>'+(rec.check_out?fmtTime(rec.check_out):'—')+'</strong> Type: <strong>'+(rec.work_type||'Office')+'</strong> Status: <strong>'+(rec.status||'—')+'</strong>'+(rec.admin_fix?' <span style="color:#6d28d9">[Previously Fixed]</span>':'');
+  if(rec.check_in&&ciEl){var p1=rec.check_in.split(':');if(p1.length>=2)ciEl.value=p1[0]+':'+p1[1];}
+  if(rec.check_out&&coEl){var p2=rec.check_out.split(':');if(p2.length>=2)coEl.value=p2[0]+':'+p2[1];}
+  if(rec.work_type&&typeEl){typeEl.value=rec.work_type;}
+  if(rec.checkout_status&&coStEl){coStEl.value=rec.checkout_status;}
 }
-function clearAttRecord(){
-  const empId=document.getElementById('fix-emp').value;
-  const date=document.getElementById('fix-date').value;
-  const note=document.getElementById('fix-note').value;
-  if(!empId||!date||!note){toast('Employee, date and note required');return;}
-  const att=getAttendance().filter(function(a){return!(a.employee_id===empId&&a.date===date);});
-  saveAttendance(att);
-  document.getElementById('fix-att-modal')?.remove();
-  toast('✅ Record cleared!');loadAdminToday();
+
+async function saveFixAtt(){
+  var empId=document.getElementById('fix-emp').value;
+  var date=document.getElementById('fix-date').value;
+  var ciRaw=document.getElementById('fix-ci').value;
+  var coRaw=document.getElementById('fix-co').value;
+  var note=(document.getElementById('fix-note').value||'').trim();
+  var workType=(document.getElementById('fix-ci-type').value)||'Office';
+  var coStatus=document.getElementById('fix-co-status').value||'';
+  var errEl=document.getElementById('fix-err');
+  var okEl=document.getElementById('fix-ok');
+  var saveBtn=document.getElementById('fix-save-btn');
+  function showErr(msg){if(errEl){errEl.textContent=msg;errEl.style.display='block';}if(okEl)okEl.style.display='none';}
+  function showOk(msg){if(okEl){okEl.textContent=msg;okEl.style.display='block';}if(errEl)errEl.style.display='none';}
+  if(errEl)errEl.style.display='none';
+  if(okEl)okEl.style.display='none';
+  if(!empId){showErr('Please select an employee');return;}
+  if(!date){showErr('Please select a date');return;}
+  if(!note){showErr('Admin note is required');return;}
+  if(!ciRaw&&!coRaw){showErr('Enter at least check-in or check-out time');return;}
+  if(saveBtn){saveBtn.disabled=true;saveBtn.textContent='⏳ Saving...';}
+  try{
+    // Step 1: Ensure employee exists in Supabase
+    await ensureEmployeeInSupabase(empId);
+    // Step 2: Fresh data
+    await fetchAttendance();
+    var att=getAttendance();
+    // Step 3: Find existing record - String comparison (type-safe)
+    var existing=att.filter(function(a){return String(a.employee_id)===String(empId)&&a.date===date;});
+    var existingRec=existing.find(function(r){return r.work_type===workType;})||existing.find(function(r){return r.work_type==='Office';})||existing[0]||null;
+    var recId=existingRec?String(existingRec.id):String(Date.now());
+    // Step 4: Auto-detect checkout status
+    var finalCoStatus=coStatus;
+    if(!finalCoStatus&&coRaw){
+      var coParts=coRaw.split(':').map(Number);
+      var coMin=coParts[0]*60+(coParts[1]||0);
+      var s=getSettings();
+      var eh=(s.early_checkout_before||'17:15').split(':').map(Number);
+      var sl=(s.short_leave_pm_end||'18:00').split(':').map(Number);
+      var nx=(s.checkout_normal_end||'18:10').split(':').map(Number);
+      if(coMin<eh[0]*60+eh[1])finalCoStatus='Half Day';
+      else if(coMin<=sl[0]*60+sl[1])finalCoStatus='Short Leave PM';
+      else if(coMin<=nx[0]*60+nx[1])finalCoStatus='Normal Exit';
+      else finalCoStatus='Overtime';
+    }
+    // Step 5: Build fixed record
+    var empIdInt=String(empId);
+    var fixedRec={
+      id:recId,
+      employee_id:empIdInt,
+      date:date,
+      check_in:ciRaw?(ciRaw+':00'):(existingRec&&existingRec.check_in||null),
+      check_out:coRaw?(coRaw+':00'):(existingRec&&existingRec.check_out||null),
+      work_type:workType,status:'Fixed',note:note,admin_fix:true,admin_note:note,
+      lat:existingRec&&existingRec.lat||null,lon:existingRec&&existingRec.lon||null,
+      checkout_status:finalCoStatus||null,late_minutes:0,overtime_minutes:0
+    };
+    // Step 6: Local cache upsert
+    var localIdx=att.findIndex(function(a){return String(a.id)===recId;});
+    if(localIdx>=0){att[localIdx]=Object.assign({},att[localIdx],fixedRec);}else{att.unshift(fixedRec);}
+    saveAttendance(att);
+    // Step 7: Supabase push
+    var sbPayload={id:recId,employee_id:empIdInt,date:date,check_in:fixedRec.check_in,check_out:fixedRec.check_out,work_type:workType,status:'Fixed',note:note};
+    var savedToCloud=false;
+    try{
+      var r1=await getSB().from('attendance').upsert(sbPayload,{onConflict:'id'});
+      if(r1.error)throw r1.error;
+      savedToCloud=true;
+    }catch(e1){
+      console.warn('Full payload fail:',e1.message||e1);
+      try{
+        var r2=await getSB().from('attendance').upsert({id:recId,employee_id:empIdInt,date:date,check_in:fixedRec.check_in,check_out:fixedRec.check_out,status:'Fixed'},{onConflict:'id'});
+        if(r2.error)throw r2.error;
+        savedToCloud=true;
+      }catch(e2){
+        console.error('Minimal push fail:',e2.message||e2);
+        showErr('⚠️ Locally saved. Supabase error: '+(e2.message||'Column missing — run SQL patch'));
+      }
+    }
+    // Step 8: Refresh
+    await fetchAttendance();
+    // Step 9: Feedback
+    if(savedToCloud){
+      showOk('✅ Fixed! IN: '+(fixedRec.check_in?fmtTime(fixedRec.check_in):'—')+' OUT: '+(fixedRec.check_out?fmtTime(fixedRec.check_out):'—')+' | '+workType);
+      toast('✅ Attendance fixed!',3000);
+      setTimeout(function(){var m=document.getElementById('fix-att-modal');if(m)m.remove();},2000);
+    }else{
+      toast('⚠️ Locally saved, cloud pending',4000);
+    }
+    // Step 10: UI refresh
+    loadAdminToday();loadDashboard();
+    var recEl=document.getElementById('as-records');
+    if(recEl&&recEl.style.display!=='none'&&typeof loadRecords==='function')loadRecords();
+  }catch(err){
+    console.error('saveFixAtt error:',err);
+    showErr('❌ Error: '+(err.message||'Unknown error'));
+  }finally{
+    if(saveBtn){saveBtn.disabled=false;saveBtn.textContent='✅ Save Fix';}
+  }
+}
+
+async function clearAttRecord(){
+  var empId=document.getElementById('fix-emp').value;
+  var date=document.getElementById('fix-date').value;
+  var note=(document.getElementById('fix-note').value||'').trim();
+  var errEl=document.getElementById('fix-err');
+  var okEl=document.getElementById('fix-ok');
+  function showErr(msg){if(errEl){errEl.textContent=msg;errEl.style.display='block';}if(okEl)okEl.style.display='none';}
+  function showOk(msg){if(okEl){okEl.textContent=msg;okEl.style.display='block';}if(errEl)errEl.style.display='none';}
+  if(!empId){showErr('Please select an employee');return;}
+  if(!date){showErr('Please select a date');return;}
+  if(!note){showErr('Admin note is required');return;}
+  if(!confirm(date+' ka attendance record delete karna hai?'))return;
+  try{
+    await fetchAttendance();
+    var att=getAttendance();
+    var toDelete=att.filter(function(a){return String(a.employee_id)===String(empId)&&a.date===date;});
+    if(!toDelete.length){showErr('No records found for this date');return;}
+    var errs=[];
+    for(var i=0;i<toDelete.length;i++){
+      try{
+        var res=await getSB().from('attendance').delete().eq('id',String(toDelete[i].id));
+        if(res.error)errs.push(res.error.message);
+      }catch(de){errs.push(de.message||'Delete error');}
+    }
+    saveAttendance(att.filter(function(a){return!(String(a.employee_id)===String(empId)&&a.date===date);}));
+    await fetchAttendance();
+    if(errs.length){showOk('⚠️ Locally cleared. Cloud errors: '+errs.join(' | '));}
+    else{showOk('✅ '+toDelete.length+' record(s) deleted!');toast('✅ Record cleared!',3000);setTimeout(function(){var m=document.getElementById('fix-att-modal');if(m)m.remove();},2000);}
+    loadAdminToday();loadDashboard();
+  }catch(err){
+    console.error('clearAttRecord:',err);
+    showErr('❌ Error: '+(err.message||'Unknown error'));
+  }
 }
 function terminateEmployee(id){
   if(!confirm('Terminate this employee? They will lose portal access immediately.'))return;
@@ -2209,336 +2349,295 @@ if(document.readyState==='loading'){
 </script>
 
 <script>
-/* ===== HOTFIX: FK-safe attendance save + live sync ===== */
+/* ===== FIXED: FK-safe attendance save + attMap String normalization ===== */
 (function(){
-  const _origFetchAttendance = typeof fetchAttendance === 'function' ? fetchAttendance : null;
 
-  function mergeAttendance(localArr, remoteArr){
-    const map = new Map();
-    (localArr || []).forEach(r => map.set(String(r.id), r));
-    (remoteArr || []).forEach(r => map.set(String(r.id), Object.assign({}, map.get(String(r.id)) || {}, r)));
-    return Array.from(map.values()).sort((a,b)=>{
-      const da=(a.date||'')+(a.check_in||'');
-      const db=(b.date||'')+(b.check_in||'');
-      return db.localeCompare(da);
-    });
-  }
+  /* ---- helper: normalize employee_id to integer for Supabase ---- */
+  function toEmpInt(v){return String(v||"");}
 
+  /* ---- helper: ensure employee exists in Supabase ---- */
   async function ensureEmployeeInSupabase(employeeId){
-    const empId = String(employeeId || '');
-    if(!empId) return false;
-    const emp = (getEmployees() || []).find(e => String(e.id) === empId || String(e.emp_id) === empId);
-    if(!emp) return false;
+    var empIdStr=String(employeeId||'');
+    if(!empIdStr)return false;
+    var emp=(getEmployees()||[]).find(function(e){return String(e.id)===empIdStr||String(e.emp_id)===empIdStr;});
+    if(!emp)return false;
     try{
-      const payload = {
-        id: String(emp.id),
-        emp_id: emp.emp_id ? String(emp.emp_id) : String(emp.id),
-        name: emp.name || '',
-        email: emp.email || ('user'+String(emp.id)+'@upgromedia.local'),
-        password: emp.password || ('Pass@'+String(emp.id)),
-        designation: emp.designation || '',
-        department: emp.department || '',
-        role: emp.role || (emp.is_admin ? 'admin' : 'employee'),
-        is_admin: !!emp.is_admin,
-        joining_date: emp.joining_date || null,
-        date_of_birth: emp.date_of_birth || null,
-        status_emoji: emp.status_emoji || '😊',
-        status_text: emp.status_text || 'Available',
-        avatar_url: emp.avatar_url || '',
-        active: emp.active !== false,
-        blocked: !!emp.blocked
+      var payload={
+        id:toEmpInt(emp.id),
+        emp_id:emp.emp_id?String(emp.emp_id):String(emp.id),
+        name:emp.name||'',
+        email:emp.email||('user'+String(emp.id)+'@upgromedia.local'),
+        password:emp.password||('Pass@'+String(emp.id)),
+        designation:emp.designation||'',
+        department:emp.department||'',
+        role:emp.role||(emp.is_admin?'admin':'employee'),
+        is_admin:!!emp.is_admin,
+        joining_date:emp.joining_date||null,
+        date_of_birth:emp.date_of_birth||null,
+        status_emoji:emp.status_emoji||'😊',
+        status_text:emp.status_text||'Available',
+        avatar_url:emp.avatar_url||'',
+        active:emp.active!==false,
+        blocked:!!emp.blocked
       };
-      const { error } = await getSB().from('employees').upsert(payload, { onConflict:'id' });
-      if(error){
-        console.warn('ensureEmployeeInSupabase error:', error);
-        return false;
-      }
+      var r=await getSB().from('employees').upsert(payload,{onConflict:'id'});
+      if(r.error){console.warn('ensureEmployee error:',r.error);return false;}
       return true;
-    }catch(err){
-      console.warn('ensureEmployeeInSupabase catch:', err);
-      return false;
-    }
+    }catch(err){console.warn('ensureEmployee catch:',err);return false;}
   }
 
-  window.fetchAttendance = async function(){
+  /* ---- FIXED fetchAttendance: normalize employee_id to string for local cache ---- */
+  window.fetchAttendance=async function(){
     try{
-      const {data,error}=await getSB().from('attendance').select('*').order('date',{ascending:false});
-      if(error) throw error;
-      const remote = (data || []).map(function(a){
-        if(a.date) a.date = String(a.date).substring(0,10);
+      var res=await getSB().from('attendance').select('*').order('date',{ascending:false});
+      if(res.error)throw res.error;
+      var remote=(res.data||[]).map(function(a){
+        if(a.date)a.date=String(a.date).substring(0,10);
+        // Normalize employee_id to STRING for local cache consistency
+        a.employee_id=String(a.employee_id||'');
         return a;
       });
-      const merged = mergeAttendance(getData('attendance',[]), remote);
-      setData('attendance', merged);
+      // Merge local + remote
+      var local=getData('attendance',[]);
+      var map=new Map();
+      (local||[]).forEach(function(r){map.set(String(r.id),r);});
+      remote.forEach(function(r){map.set(String(r.id),Object.assign({},map.get(String(r.id))||{},r));});
+      var merged=Array.from(map.values()).sort(function(a,b){
+        var da=(a.date||'')+(a.check_in||'');var db=(b.date||'')+(b.check_in||'');return db.localeCompare(da);
+      });
+      setData('attendance',merged);
       return merged;
     }catch(err){
-      console.warn('fetchAttendance error:', err);
-      return getData('attendance', []);
+      console.warn('fetchAttendance error:',err);
+      return getData('attendance',[]);
     }
   };
 
-  window.pushAttendance = async function(rec){
-    const normalized = Object.assign({}, rec || {});
-    normalized.id = String(normalized.id || Date.now());
-    normalized.employee_id = String(normalized.employee_id || '');
-    if(!normalized.employee_id){
-      console.warn('pushAttendance: missing employee_id', rec);
-      return false;
-    }
+  /* ---- FIXED pushAttendance: employee_id as integer for Supabase ---- */
+  window.pushAttendance=async function(rec){
+    var normalized=Object.assign({},rec||{});
+    normalized.id=String(normalized.id||Date.now());
+    normalized.employee_id=String(normalized.employee_id||'');
+    if(!normalized.employee_id){console.warn('pushAttendance: missing employee_id');return false;}
 
     await ensureEmployeeInSupabase(normalized.employee_id);
 
-    const fullPayload = {
-      id: normalized.id,
-      employee_id: normalized.employee_id,
-      date: normalized.date,
-      check_in: normalized.check_in || null,
-      check_out: normalized.check_out || null,
-      work_type: normalized.work_type || 'Office',
-      status: normalized.status || null,
-      checkout_status: normalized.checkout_status || null,
-      note: normalized.note || normalized.admin_note || null,
-      lat: normalized.lat ?? null,
-      lon: normalized.lon ?? null,
-      checkout_lat: normalized.checkout_lat ?? null,
-      checkout_lon: normalized.checkout_lon ?? null,
-      late_minutes: normalized.late_minutes ?? 0,
-      overtime_minutes: normalized.overtime_minutes ?? 0
+    var empIdInt=toEmpInt(normalized.employee_id);
+
+    var fullPayload={
+      id:normalized.id,
+      employee_id:empIdInt,
+      date:normalized.date,
+      check_in:normalized.check_in||null,
+      check_out:normalized.check_out||null,
+      work_type:normalized.work_type||'Office',
+      status:normalized.status||null,
+      checkout_status:normalized.checkout_status||null,
+      note:normalized.note||normalized.admin_note||null,
+      lat:normalized.lat??null,lon:normalized.lon??null,
+      checkout_lat:normalized.checkout_lat??null,checkout_lon:normalized.checkout_lon??null,
+      late_minutes:normalized.late_minutes??0,
+      overtime_minutes:normalized.overtime_minutes??0
     };
 
-    let saved = false;
-    let lastError = null;
-
+    var saved=false,lastError=null;
     try{
-      let res = await getSB().from('attendance').upsert(fullPayload,{onConflict:'id'});
-      if(res.error){
-        lastError = res.error;
-        const msg = String(res.error.message || '');
-        const fkIssue = msg.includes('attendance_employee_id_fkey');
-        if(fkIssue){
-          await ensureEmployeeInSupabase(normalized.employee_id);
-        }
-        const safePayload = {
-          id: fullPayload.id,
-          employee_id: fullPayload.employee_id,
-          date: fullPayload.date,
-          check_in: fullPayload.check_in,
-          check_out: fullPayload.check_out,
-          work_type: fullPayload.work_type,
-          status: fullPayload.status,
-          note: fullPayload.note
-        };
-        res = await getSB().from('attendance').upsert(safePayload,{onConflict:'id'});
-        if(res.error){
-          lastError = res.error;
-        }else{
-          saved = true;
-        }
-      }else{
-        saved = true;
-      }
-    }catch(err){
-      lastError = err;
-    }
+      var r=await getSB().from('attendance').upsert(fullPayload,{onConflict:'id'});
+      if(r.error){
+        lastError=r.error;
+        var msg=String(r.error.message||'');
+        if(msg.includes('employee_id_fkey'))await ensureEmployeeInSupabase(normalized.employee_id);
+        // minimal fallback
+        var r2=await getSB().from('attendance').upsert({
+          id:fullPayload.id,employee_id:empIdInt,date:fullPayload.date,
+          check_in:fullPayload.check_in,check_out:fullPayload.check_out,
+          work_type:fullPayload.work_type,status:fullPayload.status,note:fullPayload.note
+        },{onConflict:'id'});
+        if(r2.error){lastError=r2.error;}else{saved=true;}
+      }else{saved=true;}
+    }catch(err){lastError=err;}
 
-    const att = getData('attendance',[]);
-    const idx = att.findIndex(a => String(a.id) === String(normalized.id));
-    if(idx >= 0) att[idx] = Object.assign({}, att[idx], normalized);
-    else att.unshift(normalized);
-    setData('attendance', att);
+    // Always update local cache (employee_id as string)
+    var att=getData('attendance',[]);
+    var idx=att.findIndex(function(a){return String(a.id)===String(normalized.id);});
+    if(idx>=0)att[idx]=Object.assign({},att[idx],normalized);else att.unshift(normalized);
+    setData('attendance',att);
 
     if(!saved){
-      console.warn('pushAttendance failed:', lastError);
-      const errMsg = String((lastError && lastError.message) || '');
-      if(errMsg.includes('attendance_employee_id_fkey')){
-        toast('⚠️ Employee cloud sync issue fixed locally. Refresh after admin login.', 4000);
-      }else{
-        toast('⚠️ Cloud save issue. Local saved.', 3000);
-      }
+      var errMsg=String((lastError&&lastError.message)||'');
+      if(errMsg.includes('employee_id_fkey')){toast('⚠️ Sync issue. Run SQL setup from admin.',4000);}
+      else{toast('⚠️ Cloud save failed. Saved locally.',3000);}
       return false;
     }
     return true;
   };
 
-  window.saveAttendanceRec = async function(rec){
-    const ok = await window.pushAttendance(rec);
-    if(ok) await window.fetchAttendance();
+  /* ---- FIXED saveAttendanceRec ---- */
+  window.saveAttendanceRec=async function(rec){
+    var ok=await window.pushAttendance(rec);
+    if(ok)await window.fetchAttendance();
     return ok;
   };
 
-  window.doPunchAfterGPS = async function(type,lat,lon){
-    const s=getSettings();
-    const offLat=parseFloat(s.office_lat||'0');
-    const offLon=parseFloat(s.office_lng||'0');
-    const radius=parseInt(s.office_radius||500);
-    const now=new Date();
-    const today=todayStr();
-    const time=pad(now.getHours())+':'+pad(now.getMinutes())+':'+pad(now.getSeconds());
-    const att=getAttendance();
-
+  /* ---- FIXED doPunchAfterGPS: employee_id as string ---- */
+  window.doPunchAfterGPS=async function(type,lat,lon){
+    var s=getSettings();
+    var offLat=parseFloat(s.office_lat||'0');var offLon=parseFloat(s.office_lng||'0');
+    var radius=parseInt(s.office_radius||500);
+    var now=new Date();var today=todayStr();
+    var time=pad(now.getHours())+':'+pad(now.getMinutes())+':'+pad(now.getSeconds());
+    var att=getAttendance();
     if(offLat&&offLon){
-      const dist=Math.round(calcDistance(lat,lon,offLat,offLon));
-      if(dist>radius){
-        updateGPSBox('error','Too far from office! Distance: '+dist+'m (allowed: '+radius+'m)');
-        toast('❌ You are '+dist+'m away from office. Must be within '+radius+'m!',4000);
-        return;
-      }
-      updateGPSBox('ok','Within office range ✅ ('+dist+'m away)');
-    } else {
-      updateGPSBox('ok','Location verified ✅');
-    }
-
+      var dist=Math.round(calcDistance(lat,lon,offLat,offLon));
+      if(dist>radius){updateGPSBox('error','Too far! '+dist+'m away (allowed: '+radius+'m)');toast('❌ '+dist+'m away. Must be within '+radius+'m!',4000);return;}
+      updateGPSBox('ok','Within range ✅ ('+dist+'m away)');
+    }else{updateGPSBox('ok','Location verified ✅');}
     if(type==='in'){
-      if(att.find(a=>String(a.employee_id)===String(currentProfile.id)&&a.date===today&&a.work_type==='Office')){
-        toast('Already checked in today!');
-        return;
-      }
-      let status='On Time';
-      const[oh,om]=(s.checkin_time||'10:00').split(':').map(Number);
-      const[lh,lm]=(s.late_after||'10:20').split(':').map(Number);
-      if(now.getHours()<oh||(now.getHours()===oh&&now.getMinutes()<om)) status='Early';
-      else if(now.getHours()<lh||(now.getHours()===lh&&now.getMinutes()<=lm)) status='On Time';
+      if(att.find(function(a){return String(a.employee_id)===String(currentProfile.id)&&a.date===today&&a.work_type==='Office';})){toast('Already checked in today!');return;}
+      var status='On Time';
+      var oh=(s.checkin_time||'10:00').split(':').map(Number);var lh=(s.late_after||'10:20').split(':').map(Number);
+      if(now.getHours()<oh[0]||(now.getHours()===oh[0]&&now.getMinutes()<oh[1]))status='Early';
+      else if(now.getHours()<lh[0]||(now.getHours()===lh[0]&&now.getMinutes()<=lh[1]))status='On Time';
       else status='Late';
-
-      const rec={id:String(Date.now()),employee_id:String(currentProfile.id),date:today,check_in:time,check_out:'',work_type:'Office',status:status,note:'',lat:lat,lon:lon};
-      att.push(rec);
-      saveAttendance(att);
-      const ok = await saveAttendanceRec(rec);
-      if(ok===false) return;
+      var rec={id:String(Date.now()),employee_id:String(currentProfile.id),date:today,check_in:time,check_out:'',work_type:'Office',status:status,note:'',lat:lat,lon:lon};
+      att.push(rec);saveAttendance(att);
+      var ok=await saveAttendanceRec(rec);
       toast('✅ Checked In at '+time+(status==='Late'?' — Late!':''));
     }else{
-      const idx=att.findIndex(a=>String(a.employee_id)===String(currentProfile.id)&&a.date===today&&a.work_type==='Office'&&!a.check_out);
+      var idx=att.findIndex(function(a){return String(a.employee_id)===String(currentProfile.id)&&a.date===today&&a.work_type==='Office'&&!a.check_out;});
       if(idx===-1){toast('Please check in first!');return;}
-      att[idx].check_out=time;
-      att[idx].checkout_lat=lat;
-      att[idx].checkout_lon=lon;
-      const h=now.getHours(), m=now.getMinutes();
-      if(h<17||(h===17&&m<15)) att[idx].checkout_status='Half Day';
-      else if(h<18) att[idx].checkout_status='Short Leave PM';
-      else if(h===18&&m<=10) att[idx].checkout_status='Normal Exit';
+      att[idx].check_out=time;att[idx].checkout_lat=lat;att[idx].checkout_lon=lon;
+      var h=now.getHours(),m=now.getMinutes();
+      if(h<17||(h===17&&m<15))att[idx].checkout_status='Half Day';
+      else if(h<18)att[idx].checkout_status='Short Leave PM';
+      else if(h===18&&m<=10)att[idx].checkout_status='Normal Exit';
       else att[idx].checkout_status='Overtime';
-      saveAttendance(att);
-      const ok = await saveAttendanceRec(att[idx]);
-      if(ok===false) return;
+      saveAttendance(att);var ok=await saveAttendanceRec(att[idx]);
       toast('✅ Checked Out at '+time);
     }
-
     await window.fetchAttendance();
     loadAttendanceTab();loadDashboard();
-    if(typeof isAdmin==='function' && isAdmin()) loadAdminToday();
+    if(typeof isAdmin==='function'&&isAdmin())loadAdminToday();
   };
 
-  window.punchWFH = async function(type){
-    const now=new Date(), today=todayStr();
-    const time=pad(now.getHours())+':'+pad(now.getMinutes())+':'+pad(now.getSeconds());
-    const note=(document.getElementById('wfh-note')||{}).value||'';
-    const att=getAttendance();
-
+  /* ---- FIXED punchWFH ---- */
+  window.punchWFH=async function(type){
+    var now=new Date(),today=todayStr();
+    var time=pad(now.getHours())+':'+pad(now.getMinutes())+':'+pad(now.getSeconds());
+    var note=(document.getElementById('wfh-note')||{}).value||'';
+    var att=getAttendance();
     if(type==='in'){
-      const s=getSettings();
-      const[wh,wm]=(s.wfh_deadline||'10:00').split(':').map(Number);
-      const afterDeadline = now.getHours()>wh || (now.getHours()===wh && now.getMinutes()>=wm);
-      const status = (afterDeadline && wfhType==='WFH') ? 'Late' : 'WFH';
-      const rec={id:String(Date.now()),employee_id:String(currentProfile.id),date:today,check_in:time,check_out:'',work_type:wfhType,status:status,note:note};
-      att.push(rec); saveAttendance(att);
-      const ok = await saveAttendanceRec(rec);
-      if(ok===false) return;
-      toast('✅ '+wfhType+' checked in at '+time);
+      var s=getSettings();var wd=(s.wfh_deadline||'10:00').split(':').map(Number);
+      var afterDl=now.getHours()>wd[0]||(now.getHours()===wd[0]&&now.getMinutes()>=wd[1]);
+      var status=(afterDl&&wfhType==='WFH')?'Late':'WFH';
+      var rec={id:String(Date.now()),employee_id:String(currentProfile.id),date:today,check_in:time,check_out:'',work_type:wfhType,status:status,note:note};
+      att.push(rec);saveAttendance(att);
+      await saveAttendanceRec(rec);
+      toast('✅ '+wfhType+' checked in at '+time+(status==='Late'?' — Late!':''));
     }else{
-      const idx=att.findIndex(a=>String(a.employee_id)===String(currentProfile.id)&&a.date===today&&!a.check_out&&(a.work_type==='WFH'||String(a.work_type||'').includes('OT-WFH')));
+      var idx=att.findIndex(function(a){return String(a.employee_id)===String(currentProfile.id)&&a.date===today&&!a.check_out&&(a.work_type==='WFH'||String(a.work_type||'').includes('OT'));});
       if(idx===-1){toast('Please check in first!');return;}
-      att[idx].check_out=time;
-      saveAttendance(att);
-      const ok = await saveAttendanceRec(att[idx]);
-      if(ok===false) return;
+      att[idx].check_out=time;saveAttendance(att);await saveAttendanceRec(att[idx]);
       toast('✅ '+(att[idx].work_type||'WFH')+' checked out at '+time);
     }
-
-    await window.fetchAttendance();
-    loadAttendanceTab();loadDashboard();
-    if(typeof isAdmin==='function' && isAdmin()) loadAdminToday();
+    await window.fetchAttendance();loadAttendanceTab();loadDashboard();
+    if(typeof isAdmin==='function'&&isAdmin())loadAdminToday();
   };
 
-  window.saveFixAtt = async function(){
-    const empId=String(document.getElementById('fix-emp').value||'');
-    const date=document.getElementById('fix-date').value;
-    const ciEl=document.getElementById('fix-ci');
-    const coEl=document.getElementById('fix-co');
-    const ci=ciEl ? ciEl.value : '';
-    const co=coEl ? coEl.value : '';
-    const note=(document.getElementById('fix-note').value||'').trim();
-    const inTypeEl=document.getElementById('fix-ci-type');
-    const outTypeEl=document.getElementById('fix-co-type');
-    const typeEl=document.getElementById('fix-type');
-    const costatusEl=document.getElementById('fix-costatus');
-
-    const workType = (typeEl && typeEl.value) || (co ? ((outTypeEl&&outTypeEl.value)||'Office') : ((inTypeEl&&inTypeEl.value)||'Office'));
-    const checkoutStatus = (costatusEl && costatusEl.value && costatusEl.value !== 'Auto-detect') ? costatusEl.value : '';
-
-    if(!empId||!date){toast('Please select employee and date');return;}
-    if(!note){toast('Admin note is required');return;}
-
-    await ensureEmployeeInSupabase(empId);
-    await window.fetchAttendance();
-
-    const att=getAttendance();
-    let rec = att.find(a=>String(a.employee_id)===empId && a.date===date && String(a.work_type||'Office')===String(workType))
-           || att.find(a=>String(a.employee_id)===empId && a.date===date);
-
-    if(rec){
-      if(ci) rec.check_in = ci + ':00';
-      if(co) rec.check_out = co + ':00';
-      rec.work_type = workType;
-      rec.status = 'Fixed';
-      rec.admin_fix = true;
-      rec.admin_note = note;
-      rec.note = note;
-      if(checkoutStatus) rec.checkout_status = checkoutStatus;
-    }else{
-      rec = {
-        id: String(Date.now()),
-        employee_id: empId,
-        date: date,
-        check_in: ci ? ci + ':00' : '',
-        check_out: co ? co + ':00' : '',
-        work_type: workType,
-        status: 'Fixed',
-        admin_fix: true,
-        admin_note: note,
-        note: note
-      };
-      if(checkoutStatus) rec.checkout_status = checkoutStatus;
-      att.push(rec);
-    }
-
-    saveAttendance(att);
-    const ok = await saveAttendanceRec(rec);
-    if(ok===false){
-      toast('⚠️ Local save done, cloud save pending', 4000);
-    }else{
-      toast('✅ Attendance record fixed!', 3000);
-    }
-
-    await window.fetchAttendance();
-    document.getElementById('fix-att-modal')?.remove();
-    loadAdminToday();loadDashboard();loadAttendanceTab();
+  /* ---- FIXED loadAdminToday: normalize attMap keys to String ---- */
+  window.loadAdminToday=function(){
+    if(!isAdmin())return;
+    var today=todayStr();var emps=getEmployees().filter(function(e){return e.active!==false;});
+    var att=getAttendance().filter(function(a){return a.date===today;});
+    var attMap={};
+    att.forEach(function(a){
+      var key=String(a.employee_id); // normalize to String
+      if(!attMap[key]||a.work_type==='Office')attMap[key]=a;
+    });
+    var present=0,late=0,absent=0,wfhCount=0;
+    var rows=emps.map(function(e){
+      var a=attMap[String(e.id)]; // String comparison
+      var nm=e.name;var av=avatarHtml(e,36,12);
+      if(!a){absent++;return '<div class="att-row">'+av+'<div style="flex:1;margin-left:9px"><div style="font-size:12px;font-weight:700">'+nm+'</div><div style="font-size:10px;color:#94a3b8">EMP-'+e.emp_id+'</div></div><span class="chip cr">— Absent</span><button style="padding:4px 9px;border-radius:7px;border:none;background:#ede9fe;color:#6d28d9;font-size:10px;font-weight:700;cursor:pointer;margin-left:6px" onclick="window._fixFor=\''+e.id+'\';openFixAttendance();setTimeout(function(){var el=document.getElementById(\'fix-emp\');if(el){el.value=\''+e.id+'\';loadExistingRecord();}},200)">🔧 Fix</button></div>';}
+      if(a.work_type==='WFH'||a.work_type==='OT-WFH')wfhCount++;
+      var lf=isLate(a);var lbl=getAttLabel(a);
+      if(lf)late++;else present++;
+      var chipCls=lbl==='Early'?'cbl':lbl==='On Time'||lbl==='Present'?'cg':'cy';
+      return '<div class="att-row">'+av+'<div style="flex:1;margin-left:9px"><div style="font-size:12px;font-weight:700">'+nm+'</div><div style="font-size:10px;color:#94a3b8">IN:'+(a.check_in?fmtTime(a.check_in):'—')+'('+(a.work_type||'Office')+')</div></div><span class="chip '+chipCls+'">'+lbl+'</span><button style="padding:4px 9px;border-radius:7px;border:none;background:#ede9fe;color:#6d28d9;font-size:10px;font-weight:700;cursor:pointer;margin-left:6px" onclick="window._fixFor=\''+e.id+'\';openFixAttendance();setTimeout(function(){var el=document.getElementById(\'fix-emp\');if(el){el.value=\''+e.id+'\';loadExistingRecord();}},200)">🔧</button></div>';
+    });
+    document.getElementById('as-today').innerHTML=
+      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px;margin-bottom:12px">'+
+      '<div style="background:#fff;border-radius:14px;padding:14px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.06)"><div style="font-size:26px;font-weight:800;color:#10b981">'+present+'</div><div style="font-size:10px;color:#64748b;margin-top:2px">Present</div></div>'+
+      '<div style="background:#fff;border-radius:14px;padding:14px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.06)"><div style="font-size:26px;font-weight:800;color:#ef4444">'+absent+'</div><div style="font-size:10px;color:#64748b;margin-top:2px">Absent</div></div>'+
+      '<div style="background:#fff;border-radius:14px;padding:14px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.06)"><div style="font-size:26px;font-weight:800;color:#f59e0b">'+late+'</div><div style="font-size:10px;color:#64748b;margin-top:2px">Late</div></div>'+
+      '</div>'+
+      '<div style="background:#fff;border-radius:14px;padding:14px;box-shadow:0 2px 8px rgba(0,0,0,.06)">'+
+      '<div style="font-weight:700;font-size:13px;color:#0f172a;margin-bottom:11px">'+fmtDate(today)+' · '+emps.length+' employees</div>'+
+      rows.join('')+'</div>';
   };
 
-  window.seedEmployeesToSupabase = async function(){
-    const emps = getEmployees() || [];
-    for(const e of emps){
-      try{ await ensureEmployeeInSupabase(e.id); }catch(_){}
-    }
+  /* ---- FIXED showDateRecords: normalize attMap keys to String ---- */
+  var _origShowDateRecords=typeof showDateRecords==='function'?showDateRecords:null;
+  window.showDateRecords=function(dateOverride){
+    var date=dateOverride||document.getElementById('rec-date').value;
+    if(!date){toast('Please select a date');return;}
+    recCurrentDate=date;
+    var emps=getEmployees().filter(function(e){return e.active!==false;});
+    var att=getAttendance().filter(function(a){return a.date===date;});
+    var attMap={};
+    att.forEach(function(a){
+      var key=String(a.employee_id); // FIX: normalize to String
+      if(!attMap[key]||a.work_type==='Office')attMap[key]=a;
+    });
+    recAllData=emps.map(function(e){
+      var a=attMap[String(e.id)]; // FIX: String lookup
+      var status='absent',lbl='❌ Absent',ci='—',co='—',wt='—';
+      if(a&&a.check_in){
+        ci=fmtTime(a.check_in);co=a.check_out?fmtTime(a.check_out):'—';wt=a.work_type||'Office';
+        if(a.work_type==='WFH'){status='wfh';lbl='🏠 WFH';}
+        else{
+          var al=getAttLabel(a);
+          if(al==='Early'){status='early';lbl='🏢 Early';}
+          else if(al==='On Time'){status='present';lbl='✅ On Time';}
+          else if(al==='Short Leave AM'){status='shortam';lbl='📋 Short AM';}
+          else if(al==='Late'){status='late';lbl='⏰ Late';}
+          else{status='present';lbl='✅ Present';}
+          if(a.status==='Absent'){status='absent';lbl='❌ Absent';}
+        }
+      }
+      return{e:e,a:a,status:status,lbl:lbl,ci:ci,co:co,wt:wt};
+    });
+    renderRecords(recAllData,date);
   };
 
-  const _origInitPortal = typeof initPortal === 'function' ? initPortal : null;
-  if(_origInitPortal){
-    window.initPortal = function(){
-      const res = _origInitPortal.apply(this, arguments);
-      setTimeout(()=>{ window.seedEmployeesToSupabase().catch(()=>{}); }, 800);
+  /* ---- FIXED filterRecords: use data-f buttons (not rflt-{k} IDs) ---- */
+  window.filterRecords=function(type){
+    document.querySelectorAll('.rflt-btn').forEach(function(b){
+      var isOn=b.dataset.f===type;
+      b.style.background=isOn?'#0f172a':'#fff';
+      b.style.color=isOn?'#fff':'#374151';
+      b.style.border=isOn?'none':'1px solid #e2e8f0';
+    });
+    var filtered=type==='all'?recAllData:recAllData.filter(function(r){return r.status===type;});
+    renderRecords(filtered,recCurrentDate);
+  };
+
+  /* ---- Seed employees to Supabase on startup ---- */
+  window.seedEmployeesToSupabase=async function(){
+    var emps=getEmployees()||[];
+    for(var i=0;i<emps.length;i++){try{await ensureEmployeeInSupabase(emps[i].id);}catch(_){}}
+  };
+
+  /* ---- Override initPortal to seed employees ---- */
+  var _origInit=typeof initPortal==='function'?initPortal:null;
+  if(_origInit){
+    window.initPortal=function(){
+      var res=_origInit.apply(this,arguments);
+      setTimeout(function(){window.seedEmployeesToSupabase().catch(function(){});},1000);
       return res;
     };
   }
+
 })();
 </script>
 
