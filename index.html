@@ -649,16 +649,48 @@ async function fetchEmployees(){
   return empsToUse;
 }
 
+
+function mergeAttendanceLists(remote,local){
+  const map={};
+  (local||[]).forEach(function(a){ if(a&&a.id) map[a.id]=Object.assign({},a); });
+  (remote||[]).forEach(function(a){ 
+    if(!a||!a.id) return;
+    const prev=map[a.id];
+    if(!prev){ map[a.id]=Object.assign({},a); return; }
+    map[a.id]=Object.assign({},a,{
+      check_in: prev.check_in || a.check_in || '',
+      check_out: prev.check_out || a.check_out || '',
+      checkout_status: prev.checkout_status || a.checkout_status || null,
+      checkout_lat: prev.checkout_lat || a.checkout_lat || null,
+      checkout_lon: prev.checkout_lon || a.checkout_lon || null,
+      note: prev.note || prev.notes || a.note || null,
+      lat: prev.lat || a.lat || null,
+      lon: prev.lon || a.lon || null,
+      late_minutes: Math.max(Number(prev.late_minutes||0), Number(a.late_minutes||0)),
+      overtime_minutes: Math.max(Number(prev.overtime_minutes||0), Number(a.overtime_minutes||0))
+    });
+    if((prev.updated_at||'') > (a.updated_at||'')) map[a.id]=Object.assign({},map[a.id],{updated_at:prev.updated_at});
+  });
+  return Object.values(map).sort(function(x,y){
+    const xd=(x.date||'')+' '+(x.check_in||'');
+    const yd=(y.date||'')+' '+(y.check_in||'');
+    return xd<yd?1:xd>yd?-1:0;
+  });
+}
+
 async function fetchAttendance(){
+  const local=getData('attendance',[]);
   try{
     const {data,error}=await getSB().from('attendance').select('*').order('date',{ascending:false});
     if(error)throw error;
     if(data){
       data.forEach(function(a){if(a.date)a.date=a.date.substring(0,10);});
-      setData('attendance',data);return data;
+      const merged=mergeAttendanceLists(data,local);
+      setData('attendance',merged);
+      return merged;
     }
   }catch(err){console.warn('fetchAttendance error:',err);}
-  return getData('attendance',[]);
+  return local;
 }
 
 async function fetchLeaves(){
@@ -680,6 +712,11 @@ async function fetchSettings(){
 }
 
 async function pushAttendance(rec){
+  // always update local cache first
+  const att=getData('attendance',[]);
+  const idx=att.findIndex(function(a){return a.id===rec.id;});
+  if(idx>=0)att[idx]=Object.assign({},att[idx],rec);else att.unshift(rec);
+  setData('attendance',att);
   try{
     // Map to Supabase column names (handles extra local fields)
     const sbRec={
@@ -697,16 +734,17 @@ async function pushAttendance(rec){
       checkout_lat:    rec.checkout_lat    || null,
       checkout_lon:    rec.checkout_lon    || null,
       late_minutes:    rec.late_minutes    || 0,
-      overtime_minutes:rec.overtime_minutes|| 0
+      overtime_minutes:rec.overtime_minutes|| 0,
+      updated_at: new Date().toISOString()
     };
     const {error}=await getSB().from('attendance').upsert(sbRec,{onConflict:'id'});
     if(error)throw error;
-  }catch(err){console.warn('pushAttendance error:',err);}
-  // always update local cache
-  const att=getData('attendance',[]);
-  const idx=att.findIndex(function(a){return a.id===rec.id;});
-  if(idx>=0)att[idx]=rec;else att.unshift(rec);
-  setData('attendance',att);
+    await fetchAttendance();
+    return true;
+  }catch(err){
+    console.warn('pushAttendance error:',err);
+    return false;
+  }
 }
 
 async function pushLeave(rec){
@@ -1121,27 +1159,6 @@ function updateGPSBox(state,msg){
   else{box.style.background='#f8fafc';box.style.borderColor='#e2e8f0';if(ic)ic.textContent='📍';if(txt){txt.textContent=msg;txt.style.color='#64748b';}}
 }
 
-
-async function refreshAttendanceViews(){
-  try{
-    await fetchAttendance();
-  }catch(e){}
-  loadAttendanceTab();
-  loadDashboard();
-
-  const adminTab=document.getElementById('tab-admin');
-  const adminOpen=adminTab&&adminTab.style.display!=='none';
-  if(adminOpen||isAdmin()){
-    const activeAtab=document.querySelector('.atab.on');
-    const tabId=activeAtab&&activeAtab.dataset&&activeAtab.dataset.tab?activeAtab.dataset.tab:'today';
-    if(tabId==='records'&&typeof loadRecords==='function') loadRecords();
-    else if(tabId==='leaves'&&typeof loadAdminLeaves==='function') loadAdminLeaves();
-    else if(tabId==='ot'&&typeof loadAdminOT==='function') loadAdminOT();
-    else if(tabId==='staff'&&typeof loadAdminStaff==='function') loadAdminStaff();
-    else loadAdminToday();
-  }
-}
-
 async function doPunchAfterGPS(type,lat,lon){
   const s=getSettings();
   const offLat=parseFloat(s.office_lat||'0');
@@ -1164,6 +1181,7 @@ async function doPunchAfterGPS(type,lat,lon){
     updateGPSBox('ok','Location verified ✅');
   }
 
+  let recToSave=null;
   if(type==='in'){
     if(att.find(function(a){return a.employee_id===currentProfile.id&&a.date===today&&a.work_type==='Office';})){
       toast('Already checked in today!');return;
@@ -1175,10 +1193,10 @@ async function doPunchAfterGPS(type,lat,lon){
     else if(now.getHours()===10&&now.getMinutes()<=20) status='On Time';
     else if(now.getHours()===10&&now.getMinutes()>=21||now.getHours()===11&&now.getMinutes()<=10) status='Short Leave AM';
     else if(late) status='Late';
-    const newRec={id:Date.now()+'',employee_id:currentProfile.id,date:today,check_in:time,check_out:'',work_type:'Office',status:status,note:'',lat:lat,lon:lon};
-    att.push(newRec);
+    recToSave={id:Date.now()+'',employee_id:currentProfile.id,date:today,check_in:time,check_out:'',work_type:'Office',status:status,note:'',lat:lat,lon:lon};
+    att.push(recToSave);
     saveAttendance(att);
-    await saveAttendanceRec(newRec);
+    await saveAttendanceRec(recToSave);
     toast('✅ Checked In at '+time+(late?' — Late!':''));
   } else {
     const idx=att.findIndex(function(a){return a.employee_id===currentProfile.id&&a.date===today&&a.work_type==='Office'&&!a.check_out;});
@@ -1189,11 +1207,16 @@ async function doPunchAfterGPS(type,lat,lon){
     else if(h<18) att[idx].checkout_status='Short Leave PM';
     else if(h===18&&m<=10) att[idx].checkout_status='Normal Exit';
     else att[idx].checkout_status='Overtime';
+    recToSave=att[idx];
     saveAttendance(att);
-    await saveAttendanceRec(att[idx]);
+    await saveAttendanceRec(recToSave);
     toast('✅ Checked Out at '+time);
   }
-  await refreshAttendanceViews();
+  await fetchAttendance();
+  loadAttendanceTab();
+  loadDashboard();
+  var adminTab=document.getElementById('tab-admin');
+  if(isAdmin() || (adminTab&&adminTab.style.display!=='none')) loadAdminToday();
 }
 
 function punch(type){
@@ -1265,7 +1288,11 @@ async function punchWFH(type){
     await saveAttendanceRec(att[idx]);
     toast('✅ WFH Checked Out at '+time);
   }
-  await refreshAttendanceViews();
+  await fetchAttendance();
+  loadAttendanceTab();
+  loadDashboard();
+  var adminTab=document.getElementById('tab-admin');
+  if(isAdmin() || (adminTab&&adminTab.style.display!=='none')) loadAdminToday();
 }
 
 /* ══ STATUS ═══════════════════════════════════════════════ */
@@ -1748,7 +1775,7 @@ function loadAdminToday(){
     '<div style="background:#fff;border-radius:14px;padding:14px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.06)"><div style="font-size:26px;font-weight:800;color:#f59e0b">'+late+'</div><div style="font-size:10px;color:#64748b;margin-top:2px">Late</div></div>'+
     '</div>'+
     '<div style="background:#fff;border-radius:14px;padding:14px;box-shadow:0 2px 8px rgba(0,0,0,.06)">'+
-    '<div style="font-weight:700;font-size:13px;color:#0f172a;margin-bottom:11px">'+fmtDate(today)+'</div>'+
+    '<div style="font-weight:700;font-size:13px;color:#0f172a;margin-bottom:11px">Tuesday, 24 March — '+fmtDate(today)+'</div>'+
     rows.join('')+'</div>';
 }
 
