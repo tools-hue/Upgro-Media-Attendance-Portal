@@ -574,8 +574,35 @@ let _sb=null;
 function getSB(){if(!_sb)_sb=supabase.createClient(SB_URL,SB_KEY);return _sb;}
 
 /* ══ LOCAL STORAGE (fallback cache) ══════════════════════ */
-function getData(k,def){try{const v=localStorage.getItem('ugm_'+k);if(v===null||v===undefined||v==='null')return def;return JSON.parse(v);}catch(e){return def;}}
-function setData(k,v){try{localStorage.setItem('ugm_'+k,JSON.stringify(v));}catch(e){}}
+function getData(k,def){
+  try{
+    // For session: check sessionStorage first (survives refresh, not new tab)
+    if(k==='session'){
+      const sv=sessionStorage.getItem('ugm_session');
+      if(sv&&sv!=='null')return JSON.parse(sv);
+      return def;
+    }
+    const v=localStorage.getItem('ugm_'+k);
+    if(v===null||v===undefined||v==='null')return def;
+    return JSON.parse(v);
+  }catch(e){return def;}
+}
+function setData(k,v){
+  try{
+    if(k==='session'){
+      // Session goes to sessionStorage (refresh-safe, not new-tab-safe)
+      if(v===null||v===undefined){
+        sessionStorage.removeItem('ugm_session');
+        localStorage.removeItem('ugm_session');
+      } else {
+        sessionStorage.setItem('ugm_session',JSON.stringify(v));
+        // Don't save to localStorage anymore
+      }
+      return;
+    }
+    localStorage.setItem('ugm_'+k,JSON.stringify(v));
+  }catch(e){}
+}
 
 /* ══ EMPLOYEES ════════════════════════════════════════════ */
 /* ══ SUPABASE DATA FUNCTIONS ═════════════════════════════ */
@@ -818,6 +845,30 @@ function showMain(){
   document.getElementById('main-app').style.display='block';
   startClock();buildBottomNav();loadDashboard();
   checkTodayAnniversaries();checkTodayBirthdays();
+  // Auto-refresh for admin — fetch fresh data every 30 seconds
+  if(currentProfile&&(currentProfile.is_admin||currentProfile.role==='admin')){
+    startAdminAutoRefresh();
+  }
+}
+
+var _adminRefreshTimer=null;
+function startAdminAutoRefresh(){
+  // Clear existing timer
+  if(_adminRefreshTimer) clearInterval(_adminRefreshTimer);
+  // Refresh every 30 seconds
+  _adminRefreshTimer=setInterval(function(){
+    if(!currentProfile) return clearInterval(_adminRefreshTimer);
+    syncFromSupabase().then(function(){
+      // If admin tab is open, refresh it silently
+      var adminTab=document.getElementById('tab-admin');
+      if(adminTab&&adminTab.style.display!=='none'){
+        var activeAtab=document.querySelector('.atab.on');
+        if(activeAtab) switchATab(activeAtab.textContent.trim().toLowerCase().replace(/[^a-z]/g,''),activeAtab);
+      }
+      // Also refresh dashboard silently
+      loadDashboard();
+    }).catch(function(){});
+  }, 30000); // 30 seconds
 }
 function initStars(){
   const sf=document.getElementById('star-field');if(!sf)return;sf.innerHTML='';
@@ -855,8 +906,14 @@ function doLogin(){
   },700);
 }
 function doSignOut(){
+  // Stop auto-refresh timer
+  if(typeof _adminRefreshTimer!=='undefined'&&_adminRefreshTimer){
+    clearInterval(_adminRefreshTimer);_adminRefreshTimer=null;
+  }
   currentUser=null;currentProfile=null;
-  setData('session',null);try{localStorage.removeItem('ugm_session');}catch(e){};
+  setData('session',null);
+  try{localStorage.removeItem('ugm_session');}catch(e){}
+  try{sessionStorage.removeItem('ugm_session');}catch(e){}
   document.getElementById('main-app').style.display='none';
   document.getElementById('login-page').style.display='block';
   initStars();
@@ -2077,14 +2134,28 @@ function statusClass(r){
 
 /* ══ START APP ════════════════════════════════════════════ */
 function initPortal(){
-  // ✅ FIX: Always clear session — show login page first every time
-  // Sync employees from Supabase in background (for fresh data)
+  // Session in sessionStorage = refresh safe, new tab = fresh login
+  // Clear old localStorage session to prevent permanent auto-login
   try{localStorage.removeItem('ugm_session');}catch(x){}
-  setData('session',null);
-  currentUser=null;
-  currentProfile=null;
-  // Fetch employees in background so login is fast
+
+  // Sync data from Supabase in background
   syncFromSupabase().catch(function(){});
+
+  var sess=getData('session',null);
+  if(sess&&sess.id&&sess.email){
+    var emps=getEmployees();
+    var found=emps.find(function(e){return e.id===sess.id&&e.email===sess.email;});
+    if(found&&found.active!==false&&!found.blocked){
+      currentUser=found;currentProfile=found;
+      showMain();
+      // Start admin auto-refresh if admin
+      if(found.is_admin||found.role==='admin') startAdminAutoRefresh();
+      return;
+    }
+  }
+  // No valid session — show login
+  setData('session',null);
+  currentUser=null;currentProfile=null;
   showLogin();
 }
 if(document.readyState==='loading'){
