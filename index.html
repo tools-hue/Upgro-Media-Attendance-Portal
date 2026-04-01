@@ -539,13 +539,13 @@ button{cursor:pointer}
     <div id="tab-admin" class="nav-tab" style="display:none">
       <div class="admin-header">
         <div class="admin-tabs">
-          <button class="atab on" onclick="switchATab('today',this)"><span class="atab-ic">📊</span>Today</button>
-          <button class="atab" onclick="switchATab('records',this)"><span class="atab-ic">📅</span>Records</button>
-          <button class="atab" onclick="switchATab('ot',this)"><span class="atab-ic">⏱️</span>OT/WFH</button>
-          <button class="atab" onclick="switchATab('leaves',this)"><span class="atab-ic">📋</span>Leaves</button>
-          <button class="atab" onclick="switchATab('staff',this)"><span class="atab-ic">👥</span>Staff</button>
-          <button class="atab" onclick="switchATab('export',this)"><span class="atab-ic">📤</span>Export</button>
-          <button class="atab" onclick="switchATab('settings',this)"><span class="atab-ic">⚙️</span>Settings</button>
+          <button class="atab on" data-tab="today" onclick="switchATab('today',this)"><span class="atab-ic">📊</span>Today</button>
+          <button class="atab" data-tab="records" onclick="switchATab('records',this)"><span class="atab-ic">📅</span>Records</button>
+          <button class="atab" data-tab="ot" onclick="switchATab('ot',this)"><span class="atab-ic">⏱️</span>OT/WFH</button>
+          <button class="atab" data-tab="leaves" onclick="switchATab('leaves',this)"><span class="atab-ic">📋</span>Leaves</button>
+          <button class="atab" data-tab="staff" onclick="switchATab('staff',this)"><span class="atab-ic">👥</span>Staff</button>
+          <button class="atab" data-tab="export" onclick="switchATab('export',this)"><span class="atab-ic">📤</span>Export</button>
+          <button class="atab" data-tab="settings" onclick="switchATab('settings',this)"><span class="atab-ic">⚙️</span>Settings</button>
         </div>
       </div>
       <div class="admin-content">
@@ -845,7 +845,22 @@ function showMain(){
   document.getElementById('main-app').style.display='block';
   startClock();buildBottomNav();loadDashboard();
   checkTodayAnniversaries();checkTodayBirthdays();
-  // Auto-refresh for admin — fetch fresh data every 30 seconds
+  // ✅ FIX: Restore last active tab after refresh
+  try{
+    var lastTab=sessionStorage.getItem('ugm_curtab');
+    if(lastTab&&lastTab!=='home'&&lastTab!=='checkin'){
+      setTimeout(function(){
+        var navBtns=document.querySelectorAll('.nav-btn');
+        navBtns.forEach(function(btn){
+          var lbl=btn.querySelector('.nav-lbl');
+          if(lbl&&lbl.textContent.toLowerCase().trim()===lastTab.toLowerCase()){
+            switchTab(lastTab,btn);
+          }
+        });
+      },300);
+    }
+  }catch(e){}
+  // ✅ Auto-refresh for admin every 15 seconds
   if(currentProfile&&(currentProfile.is_admin||currentProfile.role==='admin')){
     startAdminAutoRefresh();
   }
@@ -853,22 +868,32 @@ function showMain(){
 
 var _adminRefreshTimer=null;
 function startAdminAutoRefresh(){
-  // Clear existing timer
   if(_adminRefreshTimer) clearInterval(_adminRefreshTimer);
-  // Refresh every 30 seconds
+  // Refresh every 15 seconds for admin
   _adminRefreshTimer=setInterval(function(){
     if(!currentProfile) return clearInterval(_adminRefreshTimer);
-    syncFromSupabase().then(function(){
-      // If admin tab is open, refresh it silently
+    // Always fetch fresh attendance from Supabase
+    Promise.all([fetchAttendance(),fetchLeaves()]).then(function(){
+      // If admin tab is currently open, reload it
       var adminTab=document.getElementById('tab-admin');
       if(adminTab&&adminTab.style.display!=='none'){
         var activeAtab=document.querySelector('.atab.on');
-        if(activeAtab) switchATab(activeAtab.textContent.trim().toLowerCase().replace(/[^a-z]/g,''),activeAtab);
+        if(activeAtab){
+          var tabId=activeAtab.dataset.tab||activeAtab.textContent.trim().toLowerCase().replace(/[^a-z]/g,'');
+          if(tabId==='today'||tabId==='') loadAdminToday();
+          else if(tabId==='records') loadAdminRecords&&loadAdminRecords();
+          else if(tabId==='leaves') loadAdminLeaves();
+        } else {
+          loadAdminToday(); // default
+        }
       }
-      // Also refresh dashboard silently
+      // Refresh attendance tab if open
+      var attTab=document.getElementById('tab-attendance');
+      if(attTab&&attTab.style.display!=='none') loadAttendanceTab();
+      // Always update dashboard counts
       loadDashboard();
     }).catch(function(){});
-  }, 30000); // 30 seconds
+  }, 15000); // 15 seconds
 }
 function initStars(){
   const sf=document.getElementById('star-field');if(!sf)return;sf.innerHTML='';
@@ -943,13 +968,30 @@ function switchTab(id,btn){
   var el=document.getElementById('tab-'+id);if(el)el.style.display='block';
   document.querySelectorAll('.nav-btn').forEach(b=>{b.querySelector('.nav-ic').classList.remove('on');b.querySelector('.nav-lbl').classList.remove('on');});
   if(btn){btn.querySelector('.nav-ic').classList.add('on');btn.querySelector('.nav-lbl').classList.add('on');}
+  // ✅ FIX: Save current tab so refresh restores it
+  try{sessionStorage.setItem('ugm_curtab',id);}catch(e){}
   if(id==='birthdays')loadBirthdays();
   if(id==='anniversaries')loadAnniversaries();
   if(id==='holidays')loadHolidays();
   if(id==='leave')loadMyLeaves();
-  if(id==='admin'){loadAdminToday();}
+  if(id==='admin'){
+    // ✅ FIX: Fetch FRESH data from Supabase THEN load admin
+    fetchAttendance().then(function(){
+      fetchLeaves().then(function(){
+        // Restore last admin sub-tab
+        var lastAdminTab=sessionStorage.getItem('ugm_admintab')||'today';
+        loadAdminToday();
+        setTimeout(function(){
+          var btn=document.querySelector('.atab[data-tab="'+lastAdminTab+'"]');
+          if(btn) switchATab(lastAdminTab,btn);
+        },200);
+      });
+    }).catch(function(){loadAdminToday();});
+  }
   if(id==='profile')loadProfileTab();
-  if(id==='attendance')loadAttendanceTab();
+  if(id==='attendance'){
+    fetchAttendance().then(function(){loadAttendanceTab();}).catch(function(){loadAttendanceTab();});
+  }
 }
 
 /* ══ DASHBOARD ════════════════════════════════════════════ */
@@ -1516,6 +1558,7 @@ function switchATab(t,btn){
     var el=document.getElementById('as-'+id);if(el)el.style.display=id===t?'block':'none';
   });
   document.querySelectorAll('.atab').forEach(function(b){b.classList.remove('on');});
+  try{sessionStorage.setItem('ugm_admintab',t);}catch(e){}
   if(btn)btn.classList.add('on');
   if(t==='today')loadAdminToday();
   if(t==='records')loadRecords();
