@@ -1745,32 +1745,263 @@ function loadAdminToday(){
     rows.join('')+'</div>';
 }
 
+function getEmpStats(empId){
+  var now=new Date();
+  var ym=now.getFullYear()+'-'+pad(now.getMonth()+1);
+  var allAtt=getAttendance().filter(function(a){return String(a.employee_id)===String(empId);});
+  var mAtt=allAtt.filter(function(a){return a.date&&a.date.startsWith(ym);});
+  var present=mAtt.filter(function(a){return a.check_in&&a.work_type==='Office';}).length;
+  var wfh=mAtt.filter(function(a){return a.work_type==='WFH';}).length;
+  var absent=mAtt.filter(function(a){return a.status==='Absent';}).length;
+  var late=mAtt.filter(function(a){return isLate(a)&&a.work_type==='Office';}).length;
+  var total=allAtt.filter(function(a){return a.check_in;}).length;
+  return{present:present,wfh:wfh,absent:absent,late:late,total:total,month:ym};
+}
+
 function loadAdminStaff(){
   if(!isAdmin())return;
-  const emps=getEmployees();
-  const activeCount=emps.filter(function(e){return e.active!==false;}).length;
+  var emps=getEmployees();
+  var activeCount=emps.filter(function(e){return e.active!==false;}).length;
+  var now=new Date();
+  var monthLabel=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][now.getMonth()];
   document.getElementById('as-staff').innerHTML=
-    '<button onclick="openAddStaff()" style="width:100%;background:linear-gradient(135deg,#10b981,#059669);color:#fff;border:none;border-radius:13px;padding:13px;font-size:13px;font-weight:800;margin-bottom:12px;cursor:pointer">✦ Add New Employee</button>'+
-    '<div style="background:#fff;border-radius:14px;padding:14px;box-shadow:0 2px 8px rgba(0,0,0,.06)">'+
-    '<div style="font-weight:700;font-size:13px;color:#0f172a;margin-bottom:11px">All Employees ('+emps.length+') · Active: '+activeCount+'</div>'+
-    emps.map(function(e){
-      const isAdm=e.is_admin||e.role==='admin';const isBlocked=e.blocked;const isInactive=e.active===false;
-      return '<div class="staff-row">'+
-        '<div class="flex-row" style="gap:9px">'+avatarHtml(e,44,15)+
-        '<div style="flex:1"><div style="font-size:13px;font-weight:700;color:#0f172a">'+e.name+'</div>'+
-        '<div style="font-size:10px;color:#64748b">'+e.emp_id+' · '+(e.designation||'')+' · '+(e.department||'')+'</div>'+
-        '<div style="font-size:10px;color:#94a3b8">'+e.email+'</div>'+
-        '<div style="display:flex;gap:5px;margin-top:4px">'+
-        '<span class="chip '+(isAdm?'cp':'cgr')+'">'+(isAdm?'Admin':'User')+'</span>'+
-        '<span class="chip '+(isInactive?'cr':isBlocked?'cy':'cg')+'">'+(isInactive?'Inactive':isBlocked?'Blocked':'Active')+'</span>'+
-        '</div></div></div>'+
-        '<div class="staff-acts">'+
-        '<button class="btn-sm" style="background:#ede9fe;color:#6d28d9" data-eid="'+e.id+'" onclick="openEditStaff(this.dataset.eid)">✏️ Edit</button>'+
-        '<button class="btn-sm" style="background:#fef9c3;color:#854d0e" data-eid="'+e.id+'" onclick="resetStaffPw(this.dataset.eid)">🔑 Password</button>'+
-        '<button class="btn-sm" style="background:#fef2f2;color:#991b1b" data-eid="'+e.id+'" data-blk="'+(isBlocked?'1':'0')+'" onclick="toggleBlock(this.dataset.eid,this.dataset.blk===\'1\')">'+(isBlocked?'🔓 Unblock':'🔒 Block')+'</button>'+
-        '<button class="btn-sm" style="background:'+(isInactive?'#f0fdf4':'#fee2e2')+';color:'+(isInactive?'#16a34a':'#991b1b')+'" data-eid="'+e.id+'" data-act="'+(isInactive?'1':'0')+'" onclick="toggleActive(this.dataset.eid,this.dataset.act===\'1\')">'+(isInactive?'✅ Activate':'⛔ Deactivate')+'</button>'+
-        '</div></div>';
-    }).join('')+'</div>';
+    '<button onclick="openAddStaff()" style="width:100%;background:linear-gradient(135deg,#10b981,#059669);color:#fff;border:none;border-radius:13px;padding:13px;font-size:13px;font-weight:800;margin-bottom:12px;cursor:pointer">✦ Add New Employee</button>'
+    +'<div style="background:#fff;border-radius:14px;padding:14px;box-shadow:0 2px 8px rgba(0,0,0,.06)">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:11px">'
+    +'<div style="font-weight:700;font-size:13px;color:#0f172a">All Employees ('+emps.length+') · Active: '+activeCount+'</div>'
+    +'<div style="font-size:10px;color:#94a3b8">Stats: '+monthLabel+' '+now.getFullYear()+'</div>'
+    +'</div>'
+    +emps.map(function(e){
+      var isAdm=e.is_admin||e.role==='admin';
+      var isBlocked=e.blocked;
+      var isInactive=e.active===false;
+      var st=getEmpStats(e.id);
+      return '<div class="staff-row">'
+        // Top row: avatar + info + stats
+        +'<div style="display:flex;align-items:flex-start;gap:9px;cursor:pointer" data-eid="'+e.id+'" onclick="openStaffAttendance(this.dataset.eid)">'
+        +avatarHtml(e,44,15)
+        +'<div style="flex:1">'
+        +'<div style="font-size:13px;font-weight:700;color:#0f172a">'+e.name+'</div>'
+        +'<div style="font-size:10px;color:#64748b">'+e.emp_id+' · '+(e.designation||'')+' · '+(e.department||'')+'</div>'
+        +'<div style="font-size:10px;color:#94a3b8">'+e.email+'</div>'
+        +'<div style="display:flex;gap:5px;margin-top:4px">'
+        +'<span class="chip '+(isAdm?'cp':'cgr')+'">'+(isAdm?'Admin':'User')+'</span>'
+        +'<span class="chip '+(isInactive?'cr':isBlocked?'cy':'cg')+'">'+(isInactive?'Inactive':isBlocked?'Blocked':'Active')+'</span>'
+        +'</div>'
+        +'</div>'
+        // Attendance stats mini grid
+        +'<div style="text-align:right;flex-shrink:0">'
+        +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:3px;margin-bottom:3px">'
+        +'<div style="background:#f0fdf4;border-radius:6px;padding:4px 7px;text-align:center">'
+        +'<div style="font-size:14px;font-weight:800;color:#16a34a">'+st.present+'</div>'
+        +'<div style="font-size:8px;color:#16a34a;font-weight:700">Present</div>'
+        +'</div>'
+        +'<div style="background:#fef2f2;border-radius:6px;padding:4px 7px;text-align:center">'
+        +'<div style="font-size:14px;font-weight:800;color:#dc2626">'+st.absent+'</div>'
+        +'<div style="font-size:8px;color:#dc2626;font-weight:700">Absent</div>'
+        +'</div>'
+        +'<div style="background:#fef9c3;border-radius:6px;padding:4px 7px;text-align:center">'
+        +'<div style="font-size:14px;font-weight:800;color:#d97706">'+st.late+'</div>'
+        +'<div style="font-size:8px;color:#d97706;font-weight:700">Late</div>'
+        +'</div>'
+        +'<div style="background:#f5f3ff;border-radius:6px;padding:4px 7px;text-align:center">'
+        +'<div style="font-size:14px;font-weight:800;color:#7c3aed">'+st.wfh+'</div>'
+        +'<div style="font-size:8px;color:#7c3aed;font-weight:700">WFH</div>'
+        +'</div>'
+        +'</div>'
+        +'<div style="font-size:9px;color:#94a3b8;text-align:right">Total ever: '+st.total+' days · Tap to view →</div>'
+        +'</div>'
+        +'</div>'
+        // Action buttons
+        +'<div class="staff-acts">'
+        +'<button class="btn-sm" style="background:#e0f2fe;color:#0369a1" data-eid="'+e.id+'" onclick="openStaffAttendance(this.dataset.eid)">📋 Records</button>'
+        +'<button class="btn-sm" style="background:#ede9fe;color:#6d28d9" data-eid="'+e.id+'" onclick="openEditStaff(this.dataset.eid)">✏️ Edit</button>'
+        +'<button class="btn-sm" style="background:#fef9c3;color:#854d0e" data-eid="'+e.id+'" onclick="resetStaffPw(this.dataset.eid)">🔑 Password</button>'
+        +'<button class="btn-sm" style="background:#fef2f2;color:#991b1b" data-eid="'+e.id+'" data-blk="'+(isBlocked?'1':'0')+'" onclick="toggleBlockBtn(this)">'+(isBlocked?'🔓 Unblock':'🔒 Block')+'</button>'
+        +'<button class="btn-sm" style="background:'+(isInactive?'#f0fdf4':'#fee2e2')+';color:'+(isInactive?'#16a34a':'#991b1b')+'" data-eid="'+e.id+'" data-act="'+(isInactive?'1':'0')+'" onclick="toggleActiveBtn(this)">'+(isInactive?'✅ Activate':'⛔ Deactivate')+'</button>'
+        +'</div>'
+        +'</div>';
+    }).join('')
+    +'</div>';
+}
+
+function openStaffAttendance(empId){
+  var emps=getEmployees();
+  var emp=emps.find(function(e){return String(e.id)===String(empId);});
+  if(!emp)return;
+  var allAtt=getAttendance().filter(function(a){return String(a.employee_id)===String(empId);})
+    .sort(function(a,b){return b.date.localeCompare(a.date);});
+  var st=getEmpStats(empId);
+  var now=new Date();
+  var monthLabel=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][now.getMonth()]+' '+now.getFullYear();
+
+  var mo=document.createElement('div');mo.className='modal-ov';mo.id='staff-att-modal';
+  var box=document.createElement('div');box.className='modal-box';box.style.maxHeight='92vh';
+
+  // Build records HTML
+  var recsHtml=allAtt.length?allAtt.map(function(r){
+    var chipCls=r.status==='Absent'?'cr':r.status==='Fixed'?'cp':r.work_type==='WFH'?'cp':isLate(r)?'cy':'cg';
+    var lbl=r.status==='Absent'?'Absent':r.status==='Fixed'?'Fixed':r.work_type==='WFH'?'WFH':isLate(r)?'Late':'Present';
+    return '<div style="display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px solid #f8fafc">'
+      +'<div>'
+      +'<div style="font-size:12px;font-weight:700;color:#0f172a">'+fmtDate(r.date)+'</div>'
+      +'<div style="font-size:10px;color:#64748b;margin-top:1px">'
+      +'IN: '+(r.check_in?fmtTime(r.check_in):'—')+' OUT: '+(r.check_out?fmtTime(r.check_out):'—')
+      +' · '+(r.work_type||'Office')
+      +(r.checkout_status?' · '+r.checkout_status:'')
+      +(r.admin_fix?' · <span style="color:#6d28d9">Admin Fixed</span>':'')
+      +'</div>'
+      +(r.note||r.admin_note?'<div style="font-size:9px;color:#94a3b8;margin-top:1px">📝 '+(r.note||r.admin_note)+'</div>':'')
+      +'</div>'
+      +'<div style="display:flex;align-items:center;gap:5px;flex-shrink:0">'
+      +'<span class="chip '+chipCls+'">'+lbl+'</span>'
+      +'<button style="padding:3px 8px;border-radius:6px;border:none;background:#ede9fe;color:#6d28d9;font-size:9px;font-weight:700;cursor:pointer" data-rid="'+String(r.id)+'" data-eid="'+String(empId)+'" onclick="editStaffRecord(this.dataset.rid,this.dataset.eid)">✏️</button>'
+      +'<button style="padding:3px 8px;border-radius:6px;border:none;background:#fee2e2;color:#dc2626;font-size:9px;font-weight:700;cursor:pointer" data-rid="'+String(r.id)+'" data-eid="'+String(empId)+'" onclick="deleteStaffRecord(this.dataset.rid,this.dataset.eid)">🗑️</button>'
+      +'</div>'
+      +'</div>';
+  }).join(''):'<div class="empty">No attendance records found</div>';
+
+  box.innerHTML=
+    '<div class="mhdr">'
+    +'<div style="display:flex;align-items:center;gap:10px">'
+    +avatarHtml(emp,38,13)
+    +'<div><div class="mtitle">'+emp.name+'</div>'
+    +'<div style="font-size:10px;color:#64748b">EMP-'+emp.emp_id+' · '+(emp.designation||'')+'</div></div>'
+    +'</div>'
+    +'<button class="mclose" id="sam-close">✕</button>'
+    +'</div>'
+    // Stats bar
+    +'<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:13px">'
+    +'<div style="background:#f0fdf4;border-radius:9px;padding:8px;text-align:center"><div style="font-size:18px;font-weight:800;color:#16a34a">'+st.present+'</div><div style="font-size:8px;color:#16a34a;font-weight:700">Present</div><div style="font-size:7px;color:#94a3b8">'+monthLabel+'</div></div>'
+    +'<div style="background:#fef2f2;border-radius:9px;padding:8px;text-align:center"><div style="font-size:18px;font-weight:800;color:#dc2626">'+st.absent+'</div><div style="font-size:8px;color:#dc2626;font-weight:700">Absent</div><div style="font-size:7px;color:#94a3b8">'+monthLabel+'</div></div>'
+    +'<div style="background:#fef9c3;border-radius:9px;padding:8px;text-align:center"><div style="font-size:18px;font-weight:800;color:#d97706">'+st.late+'</div><div style="font-size:8px;color:#d97706;font-weight:700">Late</div><div style="font-size:7px;color:#94a3b8">'+monthLabel+'</div></div>'
+    +'<div style="background:#f5f3ff;border-radius:9px;padding:8px;text-align:center"><div style="font-size:18px;font-weight:800;color:#7c3aed">'+st.total+'</div><div style="font-size:8px;color:#7c3aed;font-weight:700">Total Days</div><div style="font-size:7px;color:#94a3b8">All time</div></div>'
+    +'</div>'
+    // Filter bar
+    +'<div style="display:flex;gap:5px;margin-bottom:10px;flex-wrap:wrap">'
+    +'<button style="padding:4px 10px;border-radius:15px;border:none;background:#0f172a;color:#fff;font-size:10px;font-weight:700;cursor:pointer" data-eid="'+String(empId)+'" data-f="all" onclick="filterStaffAtt(this.dataset.eid,this.dataset.f)">All ('+allAtt.length+')</button>'
+    +'<button style="padding:4px 10px;border-radius:15px;border:1px solid #e2e8f0;background:#fff;color:#16a34a;font-size:10px;font-weight:700;cursor:pointer" data-eid="'+String(empId)+'" data-f="present" onclick="filterStaffAtt(this.dataset.eid,this.dataset.f)">✅ Present</button>'
+    +'<button style="padding:4px 10px;border-radius:15px;border:1px solid #e2e8f0;background:#fff;color:#dc2626;font-size:10px;font-weight:700;cursor:pointer" data-eid="'+String(empId)+'" data-f="absent" onclick="filterStaffAtt(this.dataset.eid,this.dataset.f)">❌ Absent</button>'
+    +'<button style="padding:4px 10px;border-radius:15px;border:1px solid #e2e8f0;background:#fff;color:#d97706;font-size:10px;font-weight:700;cursor:pointer" data-eid="'+String(empId)+'" data-f="late" onclick="filterStaffAtt(this.dataset.eid,this.dataset.f)">⏰ Late</button>'
+    +'<button style="padding:4px 10px;border-radius:15px;border:1px solid #e2e8f0;background:#fff;color:#7c3aed;font-size:10px;font-weight:700;cursor:pointer" data-eid="'+String(empId)+'" data-f="wfh" onclick="filterStaffAtt(this.dataset.eid,this.dataset.f)">🏠 WFH</button>'
+    +'</div>'
+    // Records
+    +'<div id="staff-att-records">'+recsHtml+'</div>';
+
+  mo.appendChild(box);
+  document.body.appendChild(mo);
+  document.getElementById('sam-close').onclick=function(){mo.remove();};
+  mo.onclick=function(ev){if(ev.target===mo)mo.remove();};
+}
+
+function filterStaffAtt(empId,filter){
+  var allAtt=getAttendance().filter(function(a){return String(a.employee_id)===String(empId);})
+    .sort(function(a,b){return b.date.localeCompare(a.date);});
+  var filtered=filter==='all'?allAtt:allAtt.filter(function(r){
+    if(filter==='present')return r.check_in&&r.status!=='Absent'&&!isLate(r)&&r.work_type!=='WFH';
+    if(filter==='absent')return r.status==='Absent'||!r.check_in;
+    if(filter==='late')return isLate(r)&&r.work_type!=='WFH';
+    if(filter==='wfh')return r.work_type==='WFH'||r.work_type==='OT-WFH';
+    return true;
+  });
+  var el=document.getElementById('staff-att-records');
+  if(!el)return;
+  var emps=getEmployees();
+  el.innerHTML=filtered.length?filtered.map(function(r){
+    var chipCls=r.status==='Absent'?'cr':r.status==='Fixed'?'cp':r.work_type==='WFH'?'cp':isLate(r)?'cy':'cg';
+    var lbl=r.status==='Absent'?'Absent':r.status==='Fixed'?'Fixed':r.work_type==='WFH'?'WFH':isLate(r)?'Late':'Present';
+    return '<div style="display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px solid #f8fafc">'
+      +'<div>'
+      +'<div style="font-size:12px;font-weight:700;color:#0f172a">'+fmtDate(r.date)+'</div>'
+      +'<div style="font-size:10px;color:#64748b;margin-top:1px">'
+      +'IN: '+(r.check_in?fmtTime(r.check_in):'—')+' OUT: '+(r.check_out?fmtTime(r.check_out):'—')
+      +' · '+(r.work_type||'Office')
+      +(r.checkout_status?' · '+r.checkout_status:'')
+      +(r.admin_fix?' · <span style="color:#6d28d9">Fixed</span>':'')
+      +'</div>'
+      +(r.note?'<div style="font-size:9px;color:#94a3b8;margin-top:1px">📝 '+r.note+'</div>':'')
+      +'</div>'
+      +'<div style="display:flex;align-items:center;gap:5px;flex-shrink:0">'
+      +'<span class="chip '+chipCls+'">'+lbl+'</span>'
+      +'<button style="padding:3px 8px;border-radius:6px;border:none;background:#ede9fe;color:#6d28d9;font-size:9px;font-weight:700;cursor:pointer" data-rid="'+String(r.id)+'" data-eid="'+String(empId)+'" onclick="editStaffRecord(this.dataset.rid,this.dataset.eid)">✏️</button>'
+      +'<button style="padding:3px 8px;border-radius:6px;border:none;background:#fee2e2;color:#dc2626;font-size:9px;font-weight:700;cursor:pointer" data-rid="'+String(r.id)+'" data-eid="'+String(empId)+'" onclick="deleteStaffRecord(this.dataset.rid,this.dataset.eid)">🗑️</button>'
+      +'</div>'
+      +'</div>';
+  }).join(''):'<div class="empty">No records match this filter</div>';
+}
+
+function editStaffRecord(recId,empId){
+  var att=getAttendance();
+  var rec=att.find(function(a){return String(a.id)===String(recId);});
+  if(!rec){toast('Record not found');return;}
+  var mo=document.createElement('div');mo.className='modal-cen-ov';mo.id='edit-rec-modal';
+  mo.innerHTML='<div class="modal-cen" style="max-width:380px">'
+    +'<div class="mhdr"><div class="mtitle">✏️ Edit Record — '+fmtDate(rec.date)+'</div><button class="mclose" id="erm-close">✕</button></div>'
+    +'<div id="erm-err" style="background:#fee2e2;color:#991b1b;border-radius:9px;padding:9px;margin-bottom:10px;font-size:12px;font-weight:600;display:none"></div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'
+    +'<div class="fld"><label>Check-in</label><input type="time" id="erm-ci" value="'+(rec.check_in?rec.check_in.substring(0,5):'')+'"/></div>'
+    +'<div class="fld"><label>Check-out</label><input type="time" id="erm-co" value="'+(rec.check_out?rec.check_out.substring(0,5):'')+'"/></div>'
+    +'</div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'
+    +'<div class="fld"><label>Work Type</label><select id="erm-wt"><option>Office</option><option>WFH</option><option>OT-Office</option><option>OT-WFH</option></select></div>'
+    +'<div class="fld"><label>Status</label><select id="erm-st"><option>Present</option><option>On Time</option><option>Late</option><option>Absent</option><option>WFH</option><option>Half Day</option><option>Fixed</option></select></div>'
+    +'</div>'
+    +'<div class="fld"><label>Note / Reason</label><input type="text" id="erm-note" value="'+(rec.note||rec.admin_note||'')+'" placeholder="Edit reason..."/></div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:7px">'
+    +'<button onclick="closeEditRecModal()" style="padding:11px;border-radius:10px;border:1px solid #e2e8f0;background:#f8fafc;color:#64748b;font-weight:700;font-size:12px;cursor:pointer">Cancel</button>'
+    +'<button data-rid="'+String(recId)+'" data-eid="'+String(empId)+'" onclick="saveStaffRecord(this.dataset.rid,this.dataset.eid)" style="padding:11px;border-radius:10px;border:none;background:linear-gradient(135deg,#4f46e5,#6366f1);color:#fff;font-weight:800;font-size:12px;cursor:pointer">💾 Save</button>'
+    +'</div></div>';
+  document.body.appendChild(mo);
+  document.getElementById('erm-close').onclick=closeEditRecModal;
+  // Pre-select values
+  var wtEl=document.getElementById('erm-wt');
+  var stEl=document.getElementById('erm-st');
+  if(wtEl&&rec.work_type)wtEl.value=rec.work_type;
+  if(stEl&&rec.status)stEl.value=rec.status;
+}
+
+function closeEditRecModal(){
+  var m=document.getElementById('edit-rec-modal');if(m)m.remove();
+}
+
+async function saveStaffRecord(recId,empId){
+  var ci=document.getElementById('erm-ci').value;
+  var co=document.getElementById('erm-co').value;
+  var wt=document.getElementById('erm-wt').value;
+  var st=document.getElementById('erm-st').value;
+  var note=(document.getElementById('erm-note').value||'').trim();
+  var errEl=document.getElementById('erm-err');
+  if(errEl)errEl.style.display='none';
+  var att=getAttendance();
+  var idx=att.findIndex(function(a){return String(a.id)===String(recId);});
+  if(idx<0){if(errEl){errEl.textContent='Record not found';errEl.style.display='block';}return;}
+  att[idx].check_in=ci?ci+':00':att[idx].check_in;
+  att[idx].check_out=co?co+':00':att[idx].check_out;
+  att[idx].work_type=wt;
+  att[idx].status=st;
+  att[idx].note=note||att[idx].note;
+  att[idx].admin_fix=true;
+  saveAttendance(att);
+  try{await window.pushAttendance(att[idx]);}catch(e){}
+  await window.fetchAttendance();
+  closeEditRecModal();
+  toast('✅ Record updated!');
+  // Refresh modal
+  var m=document.getElementById('staff-att-modal');
+  if(m)m.remove();
+  openStaffAttendance(empId);
+}
+
+async function deleteStaffRecord(recId,empId){
+  if(!confirm('Delete this attendance record permanently?'))return;
+  try{await getSB().from('attendance').delete().eq('id',String(recId));}catch(e){}
+  var att=getAttendance().filter(function(a){return String(a.id)!==String(recId);});
+  saveAttendance(att);
+  await window.fetchAttendance();
+  toast('🗑️ Record deleted!');
+  var m=document.getElementById('staff-att-modal');
+  if(m)m.remove();
+  openStaffAttendance(empId);
 }
 
 function openAddStaff(){document.body.appendChild(createStaffModal('Add New Employee',null));}
@@ -1840,6 +2071,10 @@ function resetStaffPw(id){
   const emps=getEmployees();const idx=emps.findIndex(function(e){return e.id===id;});
   emps[idx].password=newPw;saveEmployees(emps);toast('✅ Password reset for '+emp.name);
 }
+
+function toggleBlockBtn(btn){toggleBlock(btn.dataset.eid,btn.dataset.blk==='1');}
+function toggleActiveBtn(btn){toggleActive(btn.dataset.eid,btn.dataset.act==='1');}
+
 function toggleBlock(id,isBlocked){
   const emps=getEmployees();const idx=emps.findIndex(function(e){return e.id===id;});
   emps[idx].blocked=!isBlocked;saveEmployees(emps);
