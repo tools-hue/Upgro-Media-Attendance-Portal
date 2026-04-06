@@ -212,7 +212,7 @@ button{cursor:pointer}
 /* ADMIN */
 .admin-wrap{background:#0f172a;min-height:calc(100vh - 60px)}
 .admin-header{background:linear-gradient(135deg,#0f172a,#1e1b4b);padding:0 12px 12px}
-.admin-tabs{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;padding-top:8px}
+.admin-tabs{display:grid;grid-template-columns:repeat(8,1fr);gap:3px;padding-top:8px}
 .atab{padding:8px 2px;border-radius:11px;border:none;background:rgba(255,255,255,.07);color:#64748b;font-weight:700;font-size:8px;display:flex;flex-direction:column;align-items:center;gap:2px;transition:all .2s;cursor:pointer}
 .atab.on{background:#fff;color:#0f172a}
 .atab-ic{font-size:16px}
@@ -546,6 +546,7 @@ button{cursor:pointer}
           <button class="atab" data-tab="staff" onclick="switchATab('staff',this)"><span class="atab-ic">👥</span>Staff</button>
           <button class="atab" data-tab="export" onclick="switchATab('export',this)"><span class="atab-ic">📤</span>Export</button>
           <button class="atab" data-tab="settings" onclick="switchATab('settings',this)"><span class="atab-ic">⚙️</span>Settings</button>
+          <button class="atab" data-tab="mark" onclick="switchATab('mark',this)"><span class="atab-ic">✍️</span>Mark</button>
         </div>
       </div>
       <div class="admin-content">
@@ -556,6 +557,7 @@ button{cursor:pointer}
         <div id="as-staff" style="display:none"></div>
         <div id="as-export" style="display:none"></div>
         <div id="as-settings" style="display:none"></div>
+        <div id="as-mark" style="display:none"></div>
       </div>
     </div>
   </div>
@@ -626,11 +628,15 @@ async function fetchEmployees(){
           changed=true;
         }
       });
-      // Preserve avatars from local cache
-      const localEmps=getData('employees',[]);
+      // Apply dedicated avatar store (survives all cache resets)
       data.forEach(function(sbEmp){
-        const loc=localEmps.find(function(l){return l.id===sbEmp.id;});
-        if(loc&&loc.avatar_url&&!sbEmp.avatar_url){sbEmp.avatar_url=loc.avatar_url;}
+        var av=getAvatar(sbEmp.id);
+        if(av)sbEmp.avatar_url=av;
+        else{
+          var localEmps=getData('employees',[]);
+          var loc=localEmps.find(function(l){return l.id===sbEmp.id;});
+          if(loc&&loc.avatar_url){sbEmp.avatar_url=loc.avatar_url;setAvatar(sbEmp.id,loc.avatar_url);}
+        }
       });
       setData('employees',data);
       return data;
@@ -746,6 +752,12 @@ async function syncFromSupabase(){
   }catch(e){console.warn('Sync failed, using local cache');}
 }
 
+
+/* ══ AVATAR STORE (persists across logins) ══════════════ */
+function getAvatarStore(){try{var v=localStorage.getItem('ugm_avatars');return v?JSON.parse(v):{};} catch(e){return {};}}
+function setAvatar(id,url){try{var s=getAvatarStore();if(url)s[String(id)]=url;else delete s[String(id)];localStorage.setItem('ugm_avatars',JSON.stringify(s));}catch(e){}}
+function getAvatar(id){return getAvatarStore()[String(id)]||'';}
+
 function getEmployees(){
   let emps=getData('employees',null);
   // Force refresh if employee count is less than expected (new employees added)
@@ -778,6 +790,8 @@ function getEmployees(){
 ];
     setData('employees',emps);
   }
+  // Apply dedicated avatar store (survives cache wipes)
+  emps.forEach(function(e){var av=getAvatar(e.id);if(av)e.avatar_url=av;});
   return emps;
 }
 function saveEmployees(arr){setData('employees',arr);}
@@ -1339,7 +1353,7 @@ function removeAvatar(){
   emps[idx].avatar_url='';
   saveEmployees(emps);
   currentProfile.avatar_url='';
-  // Push to Supabase
+  setAvatar(currentProfile.id,''); // clear dedicated store
   pushEmployee(emps[idx]).catch(function(){});
   // Update UI
   setAvatarEls(currentProfile);
@@ -1360,8 +1374,10 @@ function saveCroppedAvatar(){
   ctx.drawImage(canvas,0,0,size,size,0,0,300,300);
   const dataUrl=out.toDataURL('image/jpeg',.85);
   closeCropModal();
+  setAvatar(currentProfile.id,dataUrl); // persist to dedicated store
   const emps=getEmployees();const idx=emps.findIndex(e=>e.id===currentProfile.id);
   emps[idx].avatar_url=dataUrl;saveEmployees(emps);currentProfile.avatar_url=dataUrl;
+  pushEmployee(emps[idx]).catch(function(){});
   setAvatarEls(currentProfile);toast('✅ Profile photo updated!');
 }
 function setAvatarEls(profile){
@@ -1554,7 +1570,7 @@ function launchConfetti(){
 
 /* ══ ADMIN ════════════════════════════════════════════════ */
 function switchATab(t,btn){
-  ['today','records','ot','leaves','staff','export','settings'].forEach(function(id){
+  ['today','records','ot','leaves','staff','export','settings','mark'].forEach(function(id){
     var el=document.getElementById('as-'+id);if(el)el.style.display=id===t?'block':'none';
   });
   document.querySelectorAll('.atab').forEach(function(b){b.classList.remove('on');});
@@ -1567,6 +1583,7 @@ function switchATab(t,btn){
   if(t==='ot')loadAdminOT();
   if(t==='export')renderExport();
   if(t==='settings')renderSettings();
+  if(t==='mark')loadMarkAttendance();
 }
 
 
@@ -1991,6 +2008,7 @@ function dlCSV(rows,filename){
 
 function renderSettings(){
   const s=getSettings();
+  var now=new Date();var ym=now.getFullYear()+'-'+pad(now.getMonth()+1);
   document.getElementById('as-settings').innerHTML=
     '<div style="background:linear-gradient(135deg,#0f172a,#1e1b4b);border-radius:13px;padding:14px;margin-bottom:11px;display:flex;gap:11px;align-items:center">'+
     '<div style="width:44px;height:44px;background:rgba(255,255,255,.1);border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:22px">⚙️</div>'+
@@ -2002,18 +2020,65 @@ function renderSettings(){
     '<div><div style="font-weight:700;font-size:13px;color:#0f172a">Fix Attendance Record</div><div style="font-size:11px;color:#64748b;margin-top:1px">Correct wrong check-in or check-out for any employee on any date</div>'+
     '<div style="font-size:11px;color:#64748b;margin-top:5px">Use this to fix GPS failures, missed punches, system errors, or incorrect check-in/out times. Admin note is required and will be logged.</div></div></div>'+
     '<button onclick="openFixAttendance()" style="width:100%;background:linear-gradient(135deg,#4f46e5,#6366f1);color:#fff;border:none;border-radius:12px;padding:12px;font-size:13px;font-weight:800;cursor:pointer">🔧 Open Fix Attendance</button></div>'+
-    // Reset & Archive
-    '<div class="settings-card">'+
+    // Reset & Archive - FULLY WORKING
+    '<div class="settings-card" id="archive-card">'+
     '<div style="display:flex;gap:11px;align-items:center;margin-bottom:11px">'+
     '<div style="width:42px;height:42px;background:#dcfce7;border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:20px">🔄</div>'+
-    '<div><div style="font-weight:700;font-size:13px;color:#0f172a">Reset & Archive Records</div><div style="font-size:11px;color:#64748b;margin-top:1px">Archive records and reset dashboards — choose your scope</div></div></div>'+
-    '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px;margin-bottom:11px">'+
-    ['Full Month','Date Range','Single Date'].map(function(t,i){return '<div style="background:#f8fafc;border-radius:11px;padding:10px;text-align:center;border:1px solid #e2e8f0"><div style="font-size:18px">'+['📅','📅','📌'][i]+'</div><div style="font-size:11px;font-weight:700;color:'+(i===0?'#0f172a':i===1?'#6d28d9':'#db2777')+'">'+t+'</div><div style="font-size:9px;color:#94a3b8">'+(i===0?'Close an entire month':i===1?'From date → To date':'One specific day')+'</div></div>';}).join('')+
+    '<div><div style="font-weight:700;font-size:13px;color:#0f172a">Reset & Archive Records</div><div style="font-size:11px;color:#64748b;margin-top:1px">Delete attendance records for a period — data removed permanently</div></div></div>'+
+    // Mode tabs
+    '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:13px" id="archive-tabs">'+
+    '<button onclick="showArchiveMode(this.dataset.m)" data-m="month" id="atab-month" style="padding:9px;border-radius:9px;border:2px solid #10b981;background:#f0fdf4;color:#166534;font-weight:700;font-size:11px;cursor:pointer">📅 Full Month</button>'+
+    '<button onclick="showArchiveMode(this.dataset.m)" data-m="range" id="atab-range" style="padding:9px;border-radius:9px;border:1px solid #e2e8f0;background:#f8fafc;color:#6d28d9;font-weight:700;font-size:11px;cursor:pointer">📅 Date Range</button>'+
+    '<button onclick="showArchiveMode(this.dataset.m)" data-m="day" id="atab-day" style="padding:9px;border-radius:9px;border:1px solid #e2e8f0;background:#f8fafc;color:#db2777;font-weight:700;font-size:11px;cursor:pointer">📌 Single Day</button>'+
     '</div>'+
-    '<div style="background:#f0fdf4;border-radius:10px;padding:10px;font-size:11px;color:#166534;line-height:1.7">'+
-    '✅ <strong>Records never deleted</strong> — all data stays permanently.<br/>'+
-    '✅ <strong>Filter by employee</strong> — reset one person or all at once.<br/>'+
-    '✅ <strong>Preview before executing</strong> — see exactly what will reset.</div></div>'+
+    // Month panel
+    '<div id="archive-month" style="">'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:9px">'+
+    '<div class="fld"><label>Year</label><input id="arch-year" type="number" value="'+now.getFullYear()+'" min="2020" max="2099"/></div>'+
+    '<div class="fld"><label>Month</label><select id="arch-month">'+
+    ['January','February','March','April','May','June','July','August','September','October','November','December'].map(function(m,i){return '<option value="'+(i+1)+'"'+(i===now.getMonth()?' selected':'')+'>'+m+'</option>';}).join('')+
+    '</select></div></div>'+
+    '<div class="fld"><label>Employee (optional — leave blank for ALL)</label>'+
+    '<select id="arch-emp-month"><option value="">— All Employees —</option>'+
+    getEmployees().filter(function(e){return e.active!==false;}).map(function(e){return '<option value="'+e.id+'">'+e.name+'</option>';}).join('')+
+    '</select></div>'+
+    '<button data-m="month" onclick="previewArchive(this.dataset.m)" style="width:100%;padding:11px;border-radius:11px;border:none;background:linear-gradient(135deg,#10b981,#059669);color:#fff;font-weight:800;font-size:12px;cursor:pointer;margin-bottom:7px">🔍 Preview Records</button>'+
+    '</div>'+
+    // Range panel
+    '<div id="archive-range" style="display:none">'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:9px">'+
+    '<div class="fld"><label>From Date</label><input id="arch-from" type="date" value="'+ym+'-01"/></div>'+
+    '<div class="fld"><label>To Date</label><input id="arch-to" type="date" value="'+todayStr()+'"/></div>'+
+    '</div>'+
+    '<div class="fld"><label>Employee (optional — leave blank for ALL)</label>'+
+    '<select id="arch-emp-range"><option value="">— All Employees —</option>'+
+    getEmployees().filter(function(e){return e.active!==false;}).map(function(e){return '<option value="'+e.id+'">'+e.name+'</option>';}).join('')+
+    '</select></div>'+
+    '<button data-m="range" onclick="previewArchive(this.dataset.m)" style="width:100%;padding:11px;border-radius:11px;border:none;background:linear-gradient(135deg,#6366f1,#4f46e5);color:#fff;font-weight:800;font-size:12px;cursor:pointer;margin-bottom:7px">🔍 Preview Records</button>'+
+    '</div>'+
+    // Single day panel
+    '<div id="archive-day" style="display:none">'+
+    '<div class="fld"><label>Date</label><input id="arch-day" type="date" value="'+todayStr()+'"/></div>'+
+    '<div class="fld"><label>Employee (optional — leave blank for ALL)</label>'+
+    '<select id="arch-emp-day"><option value="">— All Employees —</option>'+
+    getEmployees().filter(function(e){return e.active!==false;}).map(function(e){return '<option value="'+e.id+'">'+e.name+'</option>';}).join('')+
+    '</select></div>'+
+    '<button data-m="day" onclick="previewArchive(this.dataset.m)" style="width:100%;padding:11px;border-radius:11px;border:none;background:linear-gradient(135deg,#ec4899,#db2777);color:#fff;font-weight:800;font-size:12px;cursor:pointer;margin-bottom:7px">🔍 Preview Records</button>'+
+    '</div>'+
+    // Preview results
+    '<div id="archive-preview" style="display:none"></div>'+
+    '</div>'+
+    // Import/Restore Data card
+    '<div class="settings-card">'+
+    '<div style="display:flex;gap:11px;align-items:center;margin-bottom:11px">'+
+    '<div style="width:42px;height:42px;background:#dbeafe;border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:20px">📥</div>'+
+    '<div><div style="font-weight:700;font-size:13px;color:#0f172a">Sync & Restore Data</div><div style="font-size:11px;color:#64748b;margin-top:1px">Force sync from Supabase or fix data issues</div></div></div>'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:7px">'+
+    '<button onclick="forceSyncFromSupabase()" style="padding:10px;border-radius:10px;border:none;background:linear-gradient(135deg,#3b82f6,#2563eb);color:#fff;font-weight:700;font-size:11px;cursor:pointer">🔄 Force Sync Supabase</button>'+
+    '<button onclick="seedAllEmployees()" style="padding:10px;border-radius:10px;border:none;background:linear-gradient(135deg,#10b981,#059669);color:#fff;font-weight:700;font-size:11px;cursor:pointer">👥 Re-seed Employees</button>'+
+    '</div>'+
+    '<div id="sync-status" style="margin-top:9px;font-size:11px;color:#64748b"></div>'+
+    '</div>'+
     // Block/Unblock
     '<div class="settings-card">'+
     '<div style="display:flex;gap:11px;align-items:center;margin-bottom:11px">'+
@@ -2111,6 +2176,458 @@ function clearAttRecord(){
   document.getElementById('fix-att-modal')?.remove();
   toast('✅ Record cleared!');loadAdminToday();
 }
+
+function showArchiveMode(mode){
+  ['month','range','day'].forEach(function(m){
+    var p=document.getElementById('archive-'+m);
+    var t=document.getElementById('atab-'+m);
+    if(!p||!t)return;
+    var active=m===mode;
+    p.style.display=active?'block':'none';
+    if(active){
+      t.style.border='2px solid '+(m==='month'?'#10b981':m==='range'?'#6366f1':'#ec4899');
+      t.style.background=m==='month'?'#f0fdf4':m==='range'?'#f5f3ff':'#fdf2f8';
+      t.style.color=m==='month'?'#166534':m==='range'?'#4f46e5':'#9d174d';
+    }else{
+      t.style.border='1px solid #e2e8f0';
+      t.style.background='#f8fafc';
+      t.style.color=m==='month'?'#166534':m==='range'?'#6d28d9':'#db2777';
+    }
+  });
+  var prev=document.getElementById('archive-preview');
+  if(prev){prev.style.display='none';prev.innerHTML='';}
+}
+
+function getArchiveDateRange(mode){
+  if(mode==='month'){
+    var yr=document.getElementById('arch-year').value;
+    var mo=document.getElementById('arch-month').value;
+    var moStr=String(mo).padStart(2,'0');
+    var lastDay=new Date(parseInt(yr),parseInt(mo),0).getDate();
+    return{from:yr+'-'+moStr+'-01',to:yr+'-'+moStr+'-'+String(lastDay).padStart(2,'0'),label:yr+'/'+moStr};
+  }else if(mode==='range'){
+    var f=document.getElementById('arch-from').value;
+    var t=document.getElementById('arch-to').value;
+    if(!f||!t){toast('Select both From and To dates');return null;}
+    if(f>t){toast('From must be before To');return null;}
+    return{from:f,to:t,label:f+' to '+t};
+  }else{
+    var d=document.getElementById('arch-day').value;
+    if(!d){toast('Select a date');return null;}
+    return{from:d,to:d,label:d};
+  }
+}
+
+function getArchiveEmpId(mode){
+  var el=document.getElementById('arch-emp-'+mode);
+  return el?el.value:'';
+}
+
+function previewArchive(mode){
+  var range=getArchiveDateRange(mode);if(!range)return;
+  var empId=getArchiveEmpId(mode);
+  var att=getAttendance().filter(function(a){
+    var inRange=a.date>=range.from&&a.date<=range.to;
+    var empMatch=!empId||String(a.employee_id)===String(empId);
+    return inRange&&empMatch;
+  });
+  var prev=document.getElementById('archive-preview');
+  if(!prev)return;
+  if(!att.length){
+    prev.style.display='block';
+    prev.innerHTML='<div style="background:#f0fdf4;border-radius:10px;padding:10px;font-size:12px;font-weight:600;color:#166534;text-align:center">✅ No records found for this period</div>';
+    return;
+  }
+  var emps=getEmployees();
+  var grouped={};
+  att.forEach(function(a){var k=String(a.employee_id);if(!grouped[k])grouped[k]=[];grouped[k].push(a);});
+  var totalCount=att.length;
+  var empCount=Object.keys(grouped).length;
+  prev.style.display='block';
+  var rows=Object.entries(grouped).map(function(entry){
+    var eid=entry[0],recs=entry[1];
+    var emp=emps.find(function(e){return String(e.id)===eid;});
+    var nm=emp?emp.name:'EMP-'+eid;
+    return '<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid #f8fafc">'
+      +'<div><div style="font-size:12px;font-weight:700;color:#0f172a">'+nm+'</div>'
+      +'<div style="font-size:10px;color:#64748b">'+recs.length+' record(s)</div></div>'
+      +'<span style="font-size:10px;font-weight:700;color:#dc2626">Will delete</span>'
+      +'</div>';
+  }).join('');
+  prev.innerHTML=
+    '<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:11px;padding:12px;margin-top:4px">'
+    +'<div style="font-weight:800;font-size:13px;color:#dc2626;margin-bottom:4px">⚠️ Preview — '+totalCount+' records across '+empCount+' employee(s)</div>'
+    +'<div style="font-size:10px;color:#64748b;margin-bottom:9px">Period: '+range.label+' '+(!empId?'· All employees':'· Selected employee only')+'</div>'
+    +'<div style="max-height:200px;overflow-y:auto;margin-bottom:10px">'+rows+'</div>'
+    +'<div style="background:#fee2e2;border-radius:9px;padding:8px 11px;font-size:11px;color:#991b1b;font-weight:600;margin-bottom:10px">'
+    +'⛔ This will permanently delete '+totalCount+' attendance records. This cannot be undone.</div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:7px">'
+    +'<button onclick="cancelArchive()" style="padding:10px;border-radius:9px;border:1px solid #e2e8f0;background:#fff;color:#64748b;font-weight:700;font-size:12px;cursor:pointer">✕ Cancel</button>'
+    +'<button data-m="'+mode+'" onclick="executeArchive(this.dataset.m)" style="padding:10px;border-radius:9px;border:none;background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;font-weight:800;font-size:12px;cursor:pointer">🗑️ Delete '+totalCount+' Records</button>'
+    +'</div></div>';
+}
+
+function cancelArchive(){
+  var prev=document.getElementById('archive-preview');
+  if(prev){prev.style.display='none';prev.innerHTML='';}
+}
+
+async function executeArchive(mode){
+  var range=getArchiveDateRange(mode);if(!range)return;
+  var empId=getArchiveEmpId(mode);
+  if(!confirm('Delete ALL attendance records for '+range.label+'? This CANNOT be undone.'))return;
+
+  var btn=document.querySelector('#archive-preview button:last-child');
+  if(btn){btn.disabled=true;btn.textContent='⏳ Deleting...';}
+
+  var att=getAttendance();
+  var toDelete=att.filter(function(a){
+    var inRange=a.date>=range.from&&a.date<=range.to;
+    var empMatch=!empId||String(a.employee_id)===String(empId);
+    return inRange&&empMatch;
+  });
+  var toKeep=att.filter(function(a){
+    var inRange=a.date>=range.from&&a.date<=range.to;
+    var empMatch=!empId||String(a.employee_id)===String(empId);
+    return !(inRange&&empMatch);
+  });
+
+  // Delete from Supabase
+  var deleted=0,errors=0;
+  for(var i=0;i<toDelete.length;i++){
+    try{
+      var r=await getSB().from('attendance').delete().eq('id',String(toDelete[i].id));
+      if(r.error)errors++;else deleted++;
+    }catch(e){errors++;}
+  }
+
+  // Update local cache regardless
+  saveAttendance(toKeep);
+  await fetchAttendance();
+
+  var prev=document.getElementById('archive-preview');
+  if(prev){
+    prev.innerHTML='<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:11px;padding:12px;text-align:center">'
+      +'<div style="font-size:22px;margin-bottom:6px">✅</div>'
+      +'<div style="font-weight:800;font-size:13px;color:#166534">Deleted '+deleted+' records</div>'
+      +(errors?'<div style="font-size:10px;color:#dc2626;margin-top:4px">⚠️ '+errors+' cloud errors (local deleted)</div>':'')
+      +'<button onclick="cancelArchive()" style="margin-top:10px;padding:8px 18px;border-radius:8px;border:1px solid #86efac;background:#fff;color:#166534;font-weight:700;font-size:11px;cursor:pointer">Close</button>'
+      +'</div>';
+  }
+
+  toast('✅ Deleted '+deleted+' records!',3500);
+  window.loadAdminToday();loadDashboard();
+}
+
+
+async function forceSyncFromSupabase(){
+  var st=document.getElementById('sync-status');
+  if(st)st.innerHTML='<span style="color:#3b82f6">🔄 Syncing from Supabase...</span>';
+  try{
+    await Promise.all([fetchEmployees(),fetchAttendance(),fetchLeaves(),fetchSettings()]);
+    if(st)st.innerHTML='<span style="color:#16a34a">✅ Sync complete! Data refreshed.</span>';
+    toast('✅ Synced from Supabase!');
+    loadDashboard();window.loadAdminToday();
+  }catch(e){
+    if(st)st.innerHTML='<span style="color:#dc2626">❌ Sync failed: '+e.message+'</span>';
+    toast('❌ Sync failed - using local data');
+  }
+}
+
+async function seedAllEmployees(){
+  var st=document.getElementById('sync-status');
+  if(st)st.innerHTML='<span style="color:#3b82f6">🔄 Seeding employees to Supabase...</span>';
+  try{
+    var emps=getEmployees()||[];var ok=0,fail=0;
+    for(var i=0;i<emps.length;i++){
+      var r=await window.ensureEmployeeInSupabase(emps[i].id);
+      if(r)ok++;else fail++;
+    }
+    if(st)st.innerHTML='<span style="color:#16a34a">✅ Seeded '+ok+' employees'+(fail?' ('+fail+' failed)':'')+'</span>';
+    toast('✅ Employees seeded to Supabase!');
+  }catch(e){
+    if(st)st.innerHTML='<span style="color:#dc2626">❌ Error: '+e.message+'</span>';
+  }
+}
+
+
+/* ══ MARK ATTENDANCE (ADMIN) ══════════════════════════════ */
+function loadMarkAttendance(){
+  if(!isAdmin())return;
+  var el=document.getElementById('as-mark');if(!el)return;
+  var today=todayStr();
+  el.innerHTML=
+    '<div style="background:linear-gradient(135deg,#0f172a,#1e1b4b);border-radius:13px;padding:13px 14px;margin-bottom:11px;display:flex;align-items:center;justify-content:space-between">'
+    +'<div><div style="font-weight:800;font-size:15px;color:#fff">✍️ Mark Attendance</div>'
+    +'<div style="font-size:11px;color:#94a3b8;margin-top:2px">Manually mark Office / WFH attendance</div></div>'
+    +'<div style="font-size:11px;color:#94a3b8">'+fmtDate(today)+'</div>'
+    +'</div>'
+    // Controls
+    +'<div style="background:#fff;border-radius:14px;padding:13px;margin-bottom:10px;box-shadow:0 2px 8px rgba(0,0,0,.06)">'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:11px">'
+    +'<div class="fld"><label>Date</label><input type="date" id="mark-date" value="'+today+'" onchange="refreshMarkList()"/></div>'
+    +'<div class="fld"><label>Default Check-in</label><input type="time" id="mark-ci-default" value="10:00"/></div>'
+    +'</div>'
+    // Bulk buttons - Office
+    +'<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:11px;padding:11px;margin-bottom:9px">'
+    +'<div style="font-weight:800;font-size:11px;color:#166534;margin-bottom:7px">🏢 OFFICE — Bulk Mark</div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:7px">'
+    +'<button data-wt="Office" onclick="markAllPresent(this.dataset.wt)" style="padding:10px;border-radius:9px;border:none;background:linear-gradient(135deg,#10b981,#059669);color:#fff;font-weight:800;font-size:11px;cursor:pointer">✅ All Office Present</button>'
+    +'<button data-wt="Office" onclick="markAllAbsent(this.dataset.wt)" style="padding:10px;border-radius:9px;border:none;background:linear-gradient(135deg,#ef4444,#dc2626);color:#fff;font-weight:800;font-size:11px;cursor:pointer">❌ All Office Absent</button>'
+    +'</div></div>'
+    // Bulk buttons - WFH
+    +'<div style="background:#f5f3ff;border:1px solid #c4b5fd;border-radius:11px;padding:11px;margin-bottom:7px">'
+    +'<div style="font-weight:800;font-size:11px;color:#6d28d9;margin-bottom:7px">🏠 WFH — Bulk Mark</div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:7px">'
+    +'<button data-wt="WFH" onclick="markAllPresent(this.dataset.wt)" style="padding:10px;border-radius:9px;border:none;background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;font-weight:800;font-size:11px;cursor:pointer">🏠 All WFH Present</button>'
+    +'<button data-wt="WFH" onclick="markAllAbsent(this.dataset.wt)" style="padding:10px;border-radius:9px;border:none;background:linear-gradient(135deg,#ef4444,#dc2626);color:#fff;font-weight:800;font-size:11px;cursor:pointer">❌ All WFH Absent</button>'
+    +'</div></div>'
+    +'<div style="font-size:10px;color:#64748b;text-align:center">Only marks employees with NO record yet for this date</div>'
+    +'</div>'
+    // Individual - Office section
+    +'<div style="background:#fff;border-radius:14px;padding:13px;margin-bottom:10px;box-shadow:0 2px 8px rgba(0,0,0,.06)">'
+    +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:11px">'
+    +'<div style="width:10px;height:10px;border-radius:50%;background:#10b981;flex-shrink:0"></div>'
+    +'<div style="font-weight:800;font-size:13px;color:#0f172a">🏢 Office Attendance</div>'
+    +'</div>'
+    +'<div id="mark-office-list"></div>'
+    +'</div>'
+    // Individual - WFH section
+    +'<div style="background:#fff;border-radius:14px;padding:13px;box-shadow:0 2px 8px rgba(0,0,0,.06)">'
+    +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:11px">'
+    +'<div style="width:10px;height:10px;border-radius:50%;background:#7c3aed;flex-shrink:0"></div>'
+    +'<div style="font-weight:800;font-size:13px;color:#0f172a">🏠 WFH Attendance</div>'
+    +'</div>'
+    +'<div id="mark-wfh-list"></div>'
+    +'</div>';
+  refreshMarkList();
+}
+
+function refreshMarkList(){
+  var date=document.getElementById('mark-date');
+  var d=date?date.value:todayStr();
+  var emps=getEmployees().filter(function(e){return e.active!==false;});
+  var att=getAttendance().filter(function(a){return a.date===d;});
+
+  // Build maps: best Office record and best WFH record per employee
+  var officeMap={},wfhMap={};
+  att.forEach(function(a){
+    var k=String(a.employee_id);
+    if(a.work_type==='Office'||a.work_type==='OT-Office'){
+      if(!officeMap[k])officeMap[k]=a;
+    } else if(a.work_type==='WFH'||a.work_type==='OT-WFH'){
+      if(!wfhMap[k])wfhMap[k]=a;
+    }
+  });
+
+  function makeRow(e, a, wt){
+    var hasRec=!!a;
+    var ci=a&&a.check_in?fmtTime(a.check_in):'—';
+    var co=a&&a.check_out?fmtTime(a.check_out):'—';
+    var st=a?a.status:'No Record';
+    var stColor={Present:'#16a34a','On Time':'#16a34a',Early:'#16a34a',WFH:'#7c3aed',Late:'#d97706',Absent:'#dc2626',Fixed:'#6d28d9','No Record':'#94a3b8'}[st]||'#64748b';
+    var av=avatarHtml(e,36,12);
+    var isOffice=wt==='Office';
+    var pBg=isOffice?'#f0fdf4':'#f5f3ff';
+    var pColor=isOffice?'#16a34a':'#7c3aed';
+    var pLabel=isOffice?'✅ P':'🏠 P';
+    return '<div style="border-bottom:1px solid #f8fafc;padding:9px 0">'
+      +'<div style="display:flex;align-items:center;gap:8px">'
+      +av
+      +'<div style="flex:1">'
+      +'<div style="font-size:12px;font-weight:700;color:#0f172a">'+e.name+'</div>'
+      +'<div style="font-size:10px;color:#64748b">EMP-'+e.emp_id+'</div>'
+      +'<div style="font-size:10px;margin-top:1px"><span style="color:'+stColor+';font-weight:700">'+st+'</span>'
+      +(hasRec?' · IN:'+ci+' OUT:'+co:'')+'</div>'
+      +'</div>'
+      +'<div style="display:flex;gap:3px;flex-shrink:0">'
+      +(hasRec?'<button style="padding:4px 7px;border-radius:6px;border:none;background:#fee2e2;color:#dc2626;font-size:9px;font-weight:700;cursor:pointer" data-eid="'+String(e.id)+'" data-wt="'+wt+'" onclick="unmarkEmployeeWt(this.dataset.eid,this.dataset.wt)">🗑️</button>':'')
+      +'<button style="padding:4px 7px;border-radius:6px;border:none;background:'+pBg+';color:'+pColor+';font-size:9px;font-weight:700;cursor:pointer" data-eid="'+String(e.id)+'" data-wt="'+wt+'" onclick="markOnePresentWt(this.dataset.eid,this.dataset.wt)">'+pLabel+'</button>'
+      +'<button style="padding:4px 7px;border-radius:6px;border:none;background:#fef2f2;color:#dc2626;font-size:9px;font-weight:700;cursor:pointer" data-eid="'+String(e.id)+'" data-wt="'+wt+'" onclick="markOneAbsentWt(this.dataset.eid,this.dataset.wt)">❌ A</button>'
+      +'<button style="padding:4px 7px;border-radius:6px;border:none;background:#ede9fe;color:#6d28d9;font-size:9px;font-weight:700;cursor:pointer" data-eid="'+String(e.id)+'" onclick="openCustomMark(this.dataset.eid)">✏️</button>'
+      +'</div>'
+      +'</div>'
+      +'</div>';
+  }
+
+  var officeEl=document.getElementById('mark-office-list');
+  var wfhEl=document.getElementById('mark-wfh-list');
+  if(officeEl) officeEl.innerHTML=emps.map(function(e){return makeRow(e,officeMap[String(e.id)],'Office');}).join('');
+  if(wfhEl) wfhEl.innerHTML=emps.map(function(e){return makeRow(e,wfhMap[String(e.id)],'WFH');}).join('');
+}
+
+async function markAllPresent(workType){
+  var wt=workType||'Office';
+  var dateEl=document.getElementById('mark-date');
+  var ciEl=document.getElementById('mark-ci-default');
+  var date=dateEl?dateEl.value:todayStr();
+  var ciTime=(ciEl?ciEl.value:'10:00')+':00';
+  if(!confirm('Mark ALL '+wt+' Present on '+date+'? Only unmarked employees will be marked.'))return;
+  var emps=getEmployees().filter(function(e){return e.active!==false;});
+  var att=getAttendance();
+  // For this work_type, find already marked employees
+  var existing=new Set(att.filter(function(a){return a.date===date&&a.work_type===wt;}).map(function(a){return String(a.employee_id);}));
+  var toMark=emps.filter(function(e){return !existing.has(String(e.id));});
+  if(!toMark.length){toast('All employees already have '+wt+' records for this date');return;}
+  toast('⏳ Marking '+toMark.length+' employees as '+wt+'...');
+  var count=0;
+  for(var i=0;i<toMark.length;i++){
+    var e=toMark[i];
+    var st=wt==='WFH'?'WFH':'Present';
+    var rec={id:String(Date.now()+i),employee_id:String(e.id),date:date,check_in:ciTime,check_out:'',work_type:wt,status:st,note:'Admin bulk mark '+wt};
+    att.push(rec);count++;
+    try{await window.pushAttendance(rec);}catch(err){}
+  }
+  saveAttendance(att);
+  await window.fetchAttendance();
+  toast('✅ Marked '+count+' employees as '+wt+' Present!',3500);
+  refreshMarkList();window.loadAdminToday();loadDashboard();
+}
+
+async function markAllAbsent(workType){
+  var wt=workType||'Office';
+  var dateEl=document.getElementById('mark-date');
+  var date=dateEl?dateEl.value:todayStr();
+  if(!confirm('Mark ALL '+wt+' Absent on '+date+'? Only unmarked employees will be marked.'))return;
+  var emps=getEmployees().filter(function(e){return e.active!==false;});
+  var att=getAttendance();
+  var existing=new Set(att.filter(function(a){return a.date===date&&a.work_type===wt;}).map(function(a){return String(a.employee_id);}));
+  var toMark=emps.filter(function(e){return !existing.has(String(e.id));});
+  if(!toMark.length){toast('All employees already have '+wt+' records for this date');return;}
+  toast('⏳ Marking '+toMark.length+' employees absent ('+wt+')...');
+  var count=0;
+  for(var i=0;i<toMark.length;i++){
+    var e=toMark[i];
+    var rec={id:String(Date.now()+i),employee_id:String(e.id),date:date,check_in:'',check_out:'',work_type:wt,status:'Absent',note:'Admin bulk absent '+wt};
+    att.push(rec);count++;
+    try{await window.pushAttendance(rec);}catch(err){}
+  }
+  saveAttendance(att);
+  await window.fetchAttendance();
+  toast('✅ Marked '+count+' employees Absent ('+wt+')!',3500);
+  refreshMarkList();window.loadAdminToday();loadDashboard();
+}
+
+async function markOnePresentWt(empId,workType){
+  var wt=workType||'Office';
+  var dateEl=document.getElementById('mark-date');
+  var ciEl=document.getElementById('mark-ci-default');
+  var date=dateEl?dateEl.value:todayStr();
+  var ciTime=(ciEl?ciEl.value:'10:00')+':00';
+  var att=getAttendance();
+  // Remove existing record for same employee+date+workType
+  var filtered=att.filter(function(a){return!(String(a.employee_id)===String(empId)&&a.date===date&&a.work_type===wt);});
+  var st=wt==='WFH'?'WFH':'Present';
+  var rec={id:String(Date.now()),employee_id:String(empId),date:date,check_in:ciTime,check_out:'18:05:00',work_type:wt,status:st,note:'Admin manual mark '+wt};
+  filtered.push(rec);
+  saveAttendance(filtered);
+  try{await window.pushAttendance(rec);}catch(err){}
+  await window.fetchAttendance();
+  refreshMarkList();window.loadAdminToday();
+  toast('✅ Marked '+wt+' Present!');
+}
+
+async function markOneAbsentWt(empId,workType){
+  var wt=workType||'Office';
+  var dateEl=document.getElementById('mark-date');
+  var date=dateEl?dateEl.value:todayStr();
+  var att=getAttendance();
+  var filtered=att.filter(function(a){return!(String(a.employee_id)===String(empId)&&a.date===date&&a.work_type===wt);});
+  var rec={id:String(Date.now()),employee_id:String(empId),date:date,check_in:'',check_out:'',work_type:wt,status:'Absent',note:'Admin manual absent '+wt};
+  filtered.push(rec);
+  saveAttendance(filtered);
+  try{await window.pushAttendance(rec);}catch(err){}
+  await window.fetchAttendance();
+  refreshMarkList();window.loadAdminToday();
+  toast('❌ Marked '+wt+' Absent!');
+}
+
+// Keep old names as aliases for backward compat
+async function markOnePresent(empId){return markOnePresentWt(empId,'Office');}
+async function markOneAbsent(empId){return markOneAbsentWt(empId,'Office');}
+
+async function unmarkEmployeeWt(empId,workType){
+  var wt=workType||'Office';
+  var dateEl=document.getElementById('mark-date');
+  var date=dateEl?dateEl.value:todayStr();
+  if(!confirm('Remove '+wt+' record for this employee on '+date+'?'))return;
+  var att=getAttendance();
+  var toDelete=att.filter(function(a){return String(a.employee_id)===String(empId)&&a.date===date&&a.work_type===wt;});
+  for(var i=0;i<toDelete.length;i++){
+    try{await getSB().from('attendance').delete().eq('id',String(toDelete[i].id));}catch(e){}
+  }
+  saveAttendance(att.filter(function(a){return!(String(a.employee_id)===String(empId)&&a.date===date&&a.work_type===wt);}));
+  await window.fetchAttendance();
+  refreshMarkList();window.loadAdminToday();
+  toast('🗑️ Record removed!');
+}
+
+async function unmarkEmployee(empId){return unmarkEmployeeWt(empId,'Office');}
+
+
+function closeCustomMarkModal(){
+  var m=document.getElementById('custom-mark-modal');
+  if(m)m.remove();
+}
+
+function openCustomMark(empId){
+  var dateEl=document.getElementById('mark-date');
+  var date=dateEl?dateEl.value:todayStr();
+  var emps=getEmployees();
+  var emp=emps.find(function(e){return String(e.id)===String(empId);});
+  if(!emp)return;
+  var att=getAttendance();
+  var existing=att.find(function(a){return String(a.employee_id)===String(empId)&&a.date===date&&a.work_type==='Office';})
+    ||att.find(function(a){return String(a.employee_id)===String(empId)&&a.date===date;});
+  var mo=document.createElement('div');mo.className='modal-cen-ov';mo.id='custom-mark-modal';
+  mo.innerHTML='<div class="modal-cen" style="max-width:380px">'
+    +'<div class="mhdr"><div class="mtitle">✏️ Custom Mark — '+emp.name+'</div><button class="mclose" id="cm-close">✕</button></div>'
+    +'<div style="background:#f0f4f8;border-radius:10px;padding:9px 12px;margin-bottom:12px;font-size:11px;color:#475569;font-weight:600">'+fmtDate(date)+' · EMP-'+emp.emp_id+'</div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'
+    +'<div class="fld"><label>Check-in Time</label><input type="time" id="cm-ci" value="'+(existing&&existing.check_in?existing.check_in.substring(0,5):'10:00')+'"/></div>'
+    +'<div class="fld"><label>Check-out Time</label><input type="time" id="cm-co" value="'+(existing&&existing.check_out?existing.check_out.substring(0,5):'18:05')+'"/></div>'
+    +'</div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'
+    +'<div class="fld"><label>Work Type</label><select id="cm-type"><option>Office</option><option>WFH</option><option>OT-Office</option><option>OT-WFH</option></select></div>'
+    +'<div class="fld"><label>Status</label><select id="cm-status"><option>Present</option><option>Late</option><option>Absent</option><option>Half Day</option><option>On Time</option><option>Early</option></select></div>'
+    +'</div>'
+    +'<div class="fld"><label>Note</label><input type="text" id="cm-note" value="Admin manual mark" placeholder="Reason..."/></div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:7px">'
+    +'<button onclick="closeCustomMarkModal()" style="padding:11px;border-radius:10px;border:1px solid #e2e8f0;background:#f8fafc;color:#64748b;font-weight:700;font-size:12px;cursor:pointer">Cancel</button>'
+    +'<button data-eid="'+String(empId)+'" data-dt="'+date+'" onclick="saveCustomMark(this.dataset.eid,this.dataset.dt)" style="padding:11px;border-radius:10px;border:none;background:linear-gradient(135deg,#4f46e5,#6366f1);color:#fff;font-weight:800;font-size:12px;cursor:pointer">💾 Save</button>'
+    +'</div></div>';
+  document.body.appendChild(mo);
+  document.getElementById('cm-close').onclick=function(){mo.remove();};
+  // Set existing values
+  if(existing){
+    var typeEl=document.getElementById('cm-type');
+    var stEl=document.getElementById('cm-status');
+    if(typeEl&&existing.work_type)typeEl.value=existing.work_type;
+    if(stEl&&existing.status)stEl.value=existing.status;
+  }
+}
+
+async function saveCustomMark(empId,date){
+  var ci=document.getElementById('cm-ci').value;
+  var co=document.getElementById('cm-co').value;
+  var type=document.getElementById('cm-type').value;
+  var status=document.getElementById('cm-status').value;
+  var note=(document.getElementById('cm-note').value||'').trim()||'Admin manual mark';
+  var att=getAttendance();
+  var filtered=att.filter(function(a){return!(String(a.employee_id)===String(empId)&&a.date===date);});
+  var rec={id:String(Date.now()),employee_id:String(empId),date:date,
+    check_in:ci?ci+':00':'',check_out:co?co+':00':'',
+    work_type:type,status:status,note:note,admin_fix:true};
+  filtered.push(rec);
+  saveAttendance(filtered);
+  try{await window.pushAttendance(rec);}catch(err){}
+  await window.fetchAttendance();
+  document.getElementById('custom-mark-modal').remove();
+  refreshMarkList();window.loadAdminToday();
+  toast('✅ Attendance marked!');
+}
+
+
 function terminateEmployee(id){
   if(!confirm('Terminate this employee? They will lose portal access immediately.'))return;
   toggleActive(id,false);toast('✅ Employee terminated. Records preserved.');renderSettings();
@@ -2209,336 +2726,615 @@ if(document.readyState==='loading'){
 </script>
 
 <script>
-/* ===== HOTFIX: FK-safe attendance save + live sync ===== */
+/* ══ COMPLETE FIX BLOCK ══════════════════════════════════ */
 (function(){
-  const _origFetchAttendance = typeof fetchAttendance === 'function' ? fetchAttendance : null;
 
-  function mergeAttendance(localArr, remoteArr){
-    const map = new Map();
-    (localArr || []).forEach(r => map.set(String(r.id), r));
-    (remoteArr || []).forEach(r => map.set(String(r.id), Object.assign({}, map.get(String(r.id)) || {}, r)));
-    return Array.from(map.values()).sort((a,b)=>{
-      const da=(a.date||'')+(a.check_in||'');
-      const db=(b.date||'')+(b.check_in||'');
-      return db.localeCompare(da);
-    });
-  }
+/* helper: string employee id */
+function sid(v){return String(v||'');}
 
-  window.ensureEmployeeInSupabase = async function ensureEmployeeInSupabase(employeeId){
-    const empId = String(employeeId || '');
-    if(!empId) return false;
-    const emp = (getEmployees() || []).find(e => String(e.id) === empId || String(e.emp_id) === empId);
-    if(!emp) return false;
-    try{
-      const payload = {
-        id: String(emp.id),
-        emp_id: emp.emp_id ? String(emp.emp_id) : String(emp.id),
-        name: emp.name || '',
-        email: emp.email || ('user'+String(emp.id)+'@upgromedia.local'),
-        password: emp.password || ('Pass@'+String(emp.id)),
-        designation: emp.designation || '',
-        department: emp.department || '',
-        role: emp.role || (emp.is_admin ? 'admin' : 'employee'),
-        is_admin: !!emp.is_admin,
-        joining_date: emp.joining_date || null,
-        date_of_birth: emp.date_of_birth || null,
-        status_emoji: emp.status_emoji || '😊',
-        status_text: emp.status_text || 'Available',
-        avatar_url: emp.avatar_url || '',
-        active: emp.active !== false,
-        blocked: !!emp.blocked
-      };
-      const { error } = await getSB().from('employees').upsert(payload, { onConflict:'id' });
-      if(error){
-        console.warn('ensureEmployeeInSupabase error:', error);
-        return false;
-      }
-      return true;
-    }catch(err){
-      console.warn('ensureEmployeeInSupabase catch:', err);
-      return false;
-    }
-  }
-
-  window.fetchAttendance = async function(){
-    try{
-      const {data,error}=await getSB().from('attendance').select('*').order('date',{ascending:false});
-      if(error) throw error;
-      const remote = (data || []).map(function(a){
-        if(a.date) a.date = String(a.date).substring(0,10);
-        return a;
-      });
-      const merged = mergeAttendance(getData('attendance',[]), remote);
-      setData('attendance', merged);
-      return merged;
-    }catch(err){
-      console.warn('fetchAttendance error:', err);
-      return getData('attendance', []);
-    }
-  };
-
-  window.pushAttendance = async function(rec){
-    const normalized = Object.assign({}, rec || {});
-    normalized.id = String(normalized.id || Date.now());
-    normalized.employee_id = String(normalized.employee_id || '');
-    if(!normalized.employee_id){
-      console.warn('pushAttendance: missing employee_id', rec);
-      return false;
-    }
-
-    await window.ensureEmployeeInSupabase(normalized.employee_id);
-
-    const fullPayload = {
-      id: normalized.id,
-      employee_id: normalized.employee_id,
-      date: normalized.date,
-      check_in: normalized.check_in || null,
-      check_out: normalized.check_out || null,
-      work_type: normalized.work_type || 'Office',
-      status: normalized.status || null,
-      checkout_status: normalized.checkout_status || null,
-      note: normalized.note || normalized.admin_note || null,
-      lat: normalized.lat ?? null,
-      lon: normalized.lon ?? null,
-      checkout_lat: normalized.checkout_lat ?? null,
-      checkout_lon: normalized.checkout_lon ?? null,
-      late_minutes: normalized.late_minutes ?? 0,
-      overtime_minutes: normalized.overtime_minutes ?? 0
-    };
-
-    let saved = false;
-    let lastError = null;
-
-    try{
-      let res = await getSB().from('attendance').upsert(fullPayload,{onConflict:'id'});
-      if(res.error){
-        lastError = res.error;
-        const msg = String(res.error.message || '');
-        const fkIssue = msg.includes('attendance_employee_id_fkey');
-        if(fkIssue){
-          await window.ensureEmployeeInSupabase(normalized.employee_id);
-        }
-        const safePayload = {
-          id: fullPayload.id,
-          employee_id: fullPayload.employee_id,
-          date: fullPayload.date,
-          check_in: fullPayload.check_in,
-          check_out: fullPayload.check_out,
-          work_type: fullPayload.work_type,
-          status: fullPayload.status,
-          note: fullPayload.note
-        };
-        res = await getSB().from('attendance').upsert(safePayload,{onConflict:'id'});
-        if(res.error){
-          lastError = res.error;
-        }else{
-          saved = true;
-        }
-      }else{
-        saved = true;
-      }
-    }catch(err){
-      lastError = err;
-    }
-
-    const att = getData('attendance',[]);
-    const idx = att.findIndex(a => String(a.id) === String(normalized.id));
-    if(idx >= 0) att[idx] = Object.assign({}, att[idx], normalized);
-    else att.unshift(normalized);
-    setData('attendance', att);
-
-    if(!saved){
-      console.warn('pushAttendance failed:', lastError);
-      const errMsg = String((lastError && lastError.message) || '');
-      if(errMsg.includes('attendance_employee_id_fkey')){
-        toast('⚠️ Employee cloud sync issue fixed locally. Refresh after admin login.', 4000);
-      }else{
-        toast('⚠️ Cloud save issue. Local saved.', 3000);
-      }
-      return false;
-    }
+/* ensure employee row exists in Supabase */
+window.ensureEmployeeInSupabase = async function(employeeId){
+  var empId=sid(employeeId);
+  if(!empId)return false;
+  var emp=(getEmployees()||[]).find(function(e){return sid(e.id)===empId||sid(e.emp_id)===empId;});
+  if(!emp)return false;
+  try{
+    var p={id:empId,emp_id:emp.emp_id?sid(emp.emp_id):empId,name:emp.name||'',
+      email:emp.email||('user'+empId+'@upgromedia.local'),
+      password:emp.password||('Pass@'+empId),
+      designation:emp.designation||'',department:emp.department||'',
+      role:emp.role||(emp.is_admin?'admin':'employee'),is_admin:!!emp.is_admin,
+      joining_date:emp.joining_date||null,date_of_birth:emp.date_of_birth||null,
+      status_emoji:emp.status_emoji||'😊',status_text:emp.status_text||'Available',
+      avatar_url:emp.avatar_url||'',active:emp.active!==false,blocked:!!emp.blocked};
+    var r=await getSB().from('employees').upsert(p,{onConflict:'id'});
+    if(r.error)throw r.error;
     return true;
-  };
+  }catch(e){console.warn('ensureEmployee:',e);return false;}
+};
 
-  window.saveAttendanceRec = async function(rec){
-    const ok = await window.pushAttendance(rec);
-    if(ok) await window.fetchAttendance();
-    return ok;
-  };
+/* FIXED fetchAttendance: normalize employee_id to string */
+window.fetchAttendance = async function(){
+  try{
+    var r=await getSB().from('attendance').select('*').order('date',{ascending:false});
+    if(r.error)throw r.error;
+    var remote=(r.data||[]).map(function(a){
+      if(a.date)a.date=sid(a.date).substring(0,10);
+      a.employee_id=sid(a.employee_id);
+      return a;
+    });
+    var local=getData('attendance',[]);
+    var map=new Map();
+    (local||[]).forEach(function(x){map.set(sid(x.id),x);});
+    remote.forEach(function(x){map.set(sid(x.id),Object.assign({},map.get(sid(x.id))||{},x));});
+    var merged=Array.from(map.values()).sort(function(a,b){
+      return ((b.date||'')+(b.check_in||'')).localeCompare((a.date||'')+(a.check_in||''));
+    });
+    setData('attendance',merged);
+    return merged;
+  }catch(e){console.warn('fetchAttendance:',e);return getData('attendance',[]);}
+};
 
-  window.doPunchAfterGPS = async function(type,lat,lon){
-    const s=getSettings();
-    const offLat=parseFloat(s.office_lat||'0');
-    const offLon=parseFloat(s.office_lng||'0');
-    const radius=parseInt(s.office_radius||500);
-    const now=new Date();
-    const today=todayStr();
-    const time=pad(now.getHours())+':'+pad(now.getMinutes())+':'+pad(now.getSeconds());
-    const att=getAttendance();
+/* FIXED pushAttendance: employee_id as string (TEXT in Supabase) */
+window.pushAttendance = async function(rec){
+  var n=Object.assign({},rec||{});
+  n.id=sid(n.id||Date.now());
+  n.employee_id=sid(n.employee_id);
+  if(!n.employee_id){return false;}
 
-    if(offLat&&offLon){
-      const dist=Math.round(calcDistance(lat,lon,offLat,offLon));
-      if(dist>radius){
-        updateGPSBox('error','Too far from office! Distance: '+dist+'m (allowed: '+radius+'m)');
-        toast('❌ You are '+dist+'m away from office. Must be within '+radius+'m!',4000);
-        return;
+  await window.ensureEmployeeInSupabase(n.employee_id);
+
+  var payload={id:n.id,employee_id:n.employee_id,date:n.date,
+    check_in:n.check_in||null,check_out:n.check_out||null,
+    work_type:n.work_type||'Office',status:n.status||null,
+    checkout_status:n.checkout_status||null,
+    note:n.note||n.admin_note||null,
+    lat:n.lat??null,lon:n.lon??null,
+    checkout_lat:n.checkout_lat??null,checkout_lon:n.checkout_lon??null,
+    late_minutes:n.late_minutes??0,overtime_minutes:n.overtime_minutes??0};
+
+  var saved=false,lastErr=null;
+  try{
+    var r=await getSB().from('attendance').upsert(payload,{onConflict:'id'});
+    if(r.error){
+      lastErr=r.error;
+      // minimal fallback without optional columns
+      var r2=await getSB().from('attendance').upsert(
+        {id:payload.id,employee_id:payload.employee_id,date:payload.date,
+         check_in:payload.check_in,check_out:payload.check_out,
+         work_type:payload.work_type,status:payload.status,note:payload.note},
+        {onConflict:'id'});
+      if(r2.error)lastErr=r2.error;else saved=true;
+    }else saved=true;
+  }catch(e){lastErr=e;}
+
+  // always update local cache
+  var att=getData('attendance',[]);
+  var idx=att.findIndex(function(a){return sid(a.id)===sid(n.id);});
+  if(idx>=0)att[idx]=Object.assign({},att[idx],n);else att.unshift(n);
+  setData('attendance',att);
+
+  if(!saved){
+    var msg=sid((lastErr&&lastErr.message)||'');
+    if(msg.includes('employee_id_fkey'))toast('⚠️ Run SQL setup file. Saved locally.',4000);
+    else toast('⚠️ Cloud save failed. Saved locally.',3000);
+  }
+  return saved;
+};
+
+window.saveAttendanceRec = async function(rec){
+  var ok=await window.pushAttendance(rec);
+  if(ok)await window.fetchAttendance();
+  return ok;
+};
+
+/* FIXED doPunchAfterGPS */
+window.doPunchAfterGPS = async function(type,lat,lon){
+  var s=getSettings();
+  var offLat=parseFloat(s.office_lat||'0'),offLon=parseFloat(s.office_lng||'0');
+  var radius=parseInt(s.office_radius||500);
+  var now=new Date(),today=todayStr();
+  var time=pad(now.getHours())+':'+pad(now.getMinutes())+':'+pad(now.getSeconds());
+  var att=getAttendance();
+
+  if(offLat&&offLon){
+    var dist=Math.round(calcDistance(lat,lon,offLat,offLon));
+    if(dist>radius){updateGPSBox('error','Too far! '+dist+'m (allowed: '+radius+'m)');toast('❌ '+dist+'m away. Must be within '+radius+'m!',4000);return;}
+    updateGPSBox('ok','Within range ✅ ('+dist+'m)');
+  }else updateGPSBox('ok','Location verified ✅');
+
+  if(type==='in'){
+    if(att.find(function(a){return sid(a.employee_id)===sid(currentProfile.id)&&a.date===today&&a.work_type==='Office';})){toast('Already checked in today!');return;}
+    var oh=(s.checkin_time||'10:00').split(':').map(Number);
+    var lh=(s.late_after||'10:20').split(':').map(Number);
+    var status='On Time';
+    if(now.getHours()<oh[0]||(now.getHours()===oh[0]&&now.getMinutes()<oh[1]))status='Early';
+    else if(now.getHours()>lh[0]||(now.getHours()===lh[0]&&now.getMinutes()>lh[1]))status='Late';
+    var rec={id:sid(Date.now()),employee_id:sid(currentProfile.id),date:today,check_in:time,check_out:'',work_type:'Office',status:status,note:'',lat:lat,lon:lon};
+    att.push(rec);saveAttendance(att);
+    await window.saveAttendanceRec(rec);
+    toast('✅ Checked In at '+time+(status==='Late'?' — Late!':''));
+  }else{
+    var idx=att.findIndex(function(a){return sid(a.employee_id)===sid(currentProfile.id)&&a.date===today&&a.work_type==='Office'&&!a.check_out;});
+    if(idx===-1){toast('Please check in first!');return;}
+    att[idx].check_out=time;att[idx].checkout_lat=lat;att[idx].checkout_lon=lon;
+    var h=now.getHours(),m=now.getMinutes();
+    if(h<17||(h===17&&m<15))att[idx].checkout_status='Half Day';
+    else if(h<18)att[idx].checkout_status='Short Leave PM';
+    else if(h===18&&m<=10)att[idx].checkout_status='Normal Exit';
+    else att[idx].checkout_status='Overtime';
+    saveAttendance(att);await window.saveAttendanceRec(att[idx]);
+    toast('✅ Checked Out at '+time);
+  }
+  await window.fetchAttendance();
+  loadAttendanceTab();loadDashboard();
+  if(isAdmin())window.loadAdminToday();
+};
+
+/* FIXED punchWFH */
+window.punchWFH = async function(type){
+  var now=new Date(),today=todayStr();
+  var time=pad(now.getHours())+':'+pad(now.getMinutes())+':'+pad(now.getSeconds());
+  var note=(document.getElementById('wfh-note')||{}).value||'';
+  var att=getAttendance();
+  if(type==='in'){
+    var s=getSettings();var wd=(s.wfh_deadline||'10:00').split(':').map(Number);
+    var afterDl=now.getHours()>wd[0]||(now.getHours()===wd[0]&&now.getMinutes()>=wd[1]);
+    var status=(afterDl&&wfhType==='WFH')?'Late':'WFH';
+    var rec={id:sid(Date.now()),employee_id:sid(currentProfile.id),date:today,check_in:time,check_out:'',work_type:wfhType,status:status,note:note};
+    att.push(rec);saveAttendance(att);await window.saveAttendanceRec(rec);
+    toast('✅ '+wfhType+' checked in at '+time);
+  }else{
+    var idx=att.findIndex(function(a){return sid(a.employee_id)===sid(currentProfile.id)&&a.date===today&&!a.check_out&&['WFH','OT-Office','OT-WFH'].includes(a.work_type);});
+    if(idx===-1){toast('Please check in first!');return;}
+    att[idx].check_out=time;saveAttendance(att);await window.saveAttendanceRec(att[idx]);
+    toast('✅ '+(att[idx].work_type||'WFH')+' checked out at '+time);
+  }
+  await window.fetchAttendance();loadAttendanceTab();loadDashboard();
+  if(isAdmin())window.loadAdminToday();
+};
+
+/* FIXED showDateRecords: normalize attMap to string keys */
+window.showDateRecords = function(dateOverride){
+  var date=dateOverride||document.getElementById('rec-date').value;
+  if(!date){toast('Please select a date');return;}
+  recCurrentDate=date;
+  var emps=getEmployees().filter(function(e){return e.active!==false;});
+  var att=getAttendance().filter(function(a){return a.date===date;});
+  var attMap={};
+  att.forEach(function(a){var k=sid(a.employee_id);if(!attMap[k]||a.work_type==='Office')attMap[k]=a;});
+  recAllData=emps.map(function(e){
+    var a=attMap[sid(e.id)];
+    var status='absent',lbl='❌ Absent',ci='—',co='—',wt='—';
+    if(a&&a.check_in){
+      ci=fmtTime(a.check_in);co=a.check_out?fmtTime(a.check_out):'—';wt=a.work_type||'Office';
+      if(a.work_type==='WFH'){status='wfh';lbl='🏠 WFH';}
+      else{
+        var al=getAttLabel(a);
+        if(al==='Early'){status='early';lbl='🏢 Early';}
+        else if(al==='On Time'){status='present';lbl='✅ On Time';}
+        else if(al==='Short Leave AM'){status='shortam';lbl='📋 Short AM';}
+        else if(al==='Late'){status='late';lbl='⏰ Late';}
+        else{status='present';lbl='✅ Present';}
+        if(a.status==='Absent'){status='absent';lbl='❌ Absent';}
       }
-      updateGPSBox('ok','Within office range ✅ ('+dist+'m away)');
-    } else {
-      updateGPSBox('ok','Location verified ✅');
     }
+    return{e:e,a:a,status:status,lbl:lbl,ci:ci,co:co,wt:wt};
+  });
+  renderRecords(recAllData,date);
+};
 
-    if(type==='in'){
-      if(att.find(a=>String(a.employee_id)===String(currentProfile.id)&&a.date===today&&a.work_type==='Office')){
-        toast('Already checked in today!');
-        return;
-      }
-      let status='On Time';
-      const[oh,om]=(s.checkin_time||'10:00').split(':').map(Number);
-      const[lh,lm]=(s.late_after||'10:20').split(':').map(Number);
-      if(now.getHours()<oh||(now.getHours()===oh&&now.getMinutes()<om)) status='Early';
-      else if(now.getHours()<lh||(now.getHours()===lh&&now.getMinutes()<=lm)) status='On Time';
-      else status='Late';
+/* FIXED filterRecords */
+window.filterRecords = function(type){
+  document.querySelectorAll('.rflt-btn').forEach(function(b){
+    var on=b.dataset.f===type;
+    b.style.background=on?'#0f172a':'#fff';
+    b.style.color=on?'#fff':'#374151';
+    b.style.border=on?'none':'1px solid #e2e8f0';
+  });
+  var filtered=type==='all'?recAllData:recAllData.filter(function(r){return r.status===type;});
+  renderRecords(filtered,recCurrentDate);
+};
 
-      const rec={id:String(Date.now()),employee_id:String(currentProfile.id),date:today,check_in:time,check_out:'',work_type:'Office',status:status,note:'',lat:lat,lon:lon};
-      att.push(rec);
-      saveAttendance(att);
-      const ok = await saveAttendanceRec(rec);
-      if(ok===false) return;
-      toast('✅ Checked In at '+time+(status==='Late'?' — Late!':''));
-    }else{
-      const idx=att.findIndex(a=>String(a.employee_id)===String(currentProfile.id)&&a.date===today&&a.work_type==='Office'&&!a.check_out);
-      if(idx===-1){toast('Please check in first!');return;}
-      att[idx].check_out=time;
-      att[idx].checkout_lat=lat;
-      att[idx].checkout_lon=lon;
-      const h=now.getHours(), m=now.getMinutes();
-      if(h<17||(h===17&&m<15)) att[idx].checkout_status='Half Day';
-      else if(h<18) att[idx].checkout_status='Short Leave PM';
-      else if(h===18&&m<=10) att[idx].checkout_status='Normal Exit';
-      else att[idx].checkout_status='Overtime';
-      saveAttendance(att);
-      const ok = await saveAttendanceRec(att[idx]);
-      if(ok===false) return;
-      toast('✅ Checked Out at '+time);
+/* FIXED loadAdminToday: string keys + clickable status + duplicate warning */
+window.loadAdminToday = function(filterStatus){
+  if(!isAdmin())return;
+  var today=todayStr();
+  var emps=getEmployees().filter(function(e){return e.active!==false;});
+  var att=getAttendance().filter(function(a){return a.date===today;});
+  var attMap={};
+  att.forEach(function(a){var k=sid(a.employee_id);if(!attMap[k]||a.work_type==='Office')attMap[k]=a;});
+  // duplicate detection
+  var countByEmp={};
+  att.forEach(function(a){var k=sid(a.employee_id);countByEmp[k]=(countByEmp[k]||0)+1;});
+  var dupIds=Object.keys(countByEmp).filter(function(k){return countByEmp[k]>1;});
+
+  var present=0,late=0,absent=0,wfh=0;
+  var rows=emps.map(function(e){
+    var a=attMap[sid(e.id)];
+    var av=avatarHtml(e,36,12);
+    var hasDup=dupIds.includes(sid(e.id));
+    var dupBadge=hasDup?'<span style="background:#fee2e2;color:#dc2626;font-size:8px;font-weight:700;border-radius:4px;padding:1px 5px;margin-left:4px">'+countByEmp[sid(e.id)]+'x</span>':'';
+    if(!a){
+      absent++;
+      if(filterStatus&&filterStatus!=='all'&&filterStatus!=='absent')return null;
+      return '<div class="att-row" style="'+(hasDup?'border-left:3px solid #ef4444;padding-left:6px;':'')+'">'+av
+        +'<div style="flex:1;margin-left:9px"><div style="font-size:12px;font-weight:700">'+e.name+dupBadge+'</div>'
+        +'<div style="font-size:10px;color:#94a3b8">EMP-'+e.emp_id+'</div></div>'
+        +'<span class="chip cr" style="cursor:pointer" data-f="absent" onclick="window.loadAdminToday(this.dataset.f)">— Absent</span>'
+        +'<button style="padding:4px 8px;border-radius:7px;border:none;background:#ede9fe;color:#6d28d9;font-size:10px;font-weight:700;cursor:pointer;margin-left:5px"'
+        +' data-eid="'+sid(e.id)+'" data-dt="'+today+'" onclick="quickFix(this.dataset.eid,this.dataset.dt)">🔧</button></div>';
     }
+    if(a.work_type==='WFH'||a.work_type==='OT-WFH')wfh++;
+    var lf=isLate(a),lbl=getAttLabel(a);
+    var rs=lf?'late':(a.work_type==='WFH'?'wfh':(lbl==='Early'?'early':(lbl==='Short Leave AM'?'shortam':'present')));
+    if(lf)late++;else if(a.work_type!=='WFH')present++;
+    if(filterStatus&&filterStatus!=='all'&&filterStatus!==rs)return null;
+    var cls={early:'cbl',present:'cg',late:'cy',shortam:'co',wfh:'cp'}[rs]||'cg';
+    var coSt=a.checkout_status?' · '+a.checkout_status:'';
+    return '<div class="att-row" style="'+(hasDup?'border-left:3px solid #ef4444;padding-left:6px;':'')+'">'+av
+      +'<div style="flex:1;margin-left:9px"><div style="font-size:12px;font-weight:700">'+e.name+dupBadge+'</div>'
+      +'<div style="font-size:10px;color:#94a3b8">IN:'+(a.check_in?fmtTime(a.check_in):'—')+' OUT:'+(a.check_out?fmtTime(a.check_out):'—')+'('+(a.work_type||'Office')+')'+coSt+'</div></div>'
+      +'<span class="chip '+cls+'" style="cursor:pointer" data-f="'+rs+'" onclick="window.loadAdminToday(this.dataset.f)">'+lbl+'</span>'
+      +'<button style="padding:4px 8px;border-radius:7px;border:none;background:#ede9fe;color:#6d28d9;font-size:10px;font-weight:700;cursor:pointer;margin-left:5px"'
+      +' data-eid="'+sid(e.id)+'" data-dt="'+today+'" onclick="quickFix(this.dataset.eid,this.dataset.dt)">🔧</button></div>';
+  }).filter(Boolean);
 
+  var dupWarn=dupIds.length
+    ?'<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;padding:8px 12px;margin-bottom:10px;font-size:11px;font-weight:700;color:#dc2626">⚠️ '+dupIds.length+' employee(s) have duplicate records — go to Records tab to delete extras</div>'
+    :'';
+
+  document.getElementById('as-today').innerHTML=
+    '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:11px">'
+    +'<div style="background:#fff;border-radius:12px;padding:11px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.06);cursor:pointer" data-f="present" onclick="window.loadAdminToday(this.dataset.f)"><div style="font-size:24px;font-weight:800;color:#10b981">'+present+'</div><div style="font-size:9px;color:#64748b;margin-top:1px">✅ Present</div></div>'
+    +'<div style="background:#fff;border-radius:12px;padding:11px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.06);cursor:pointer" data-f="absent" onclick="window.loadAdminToday(this.dataset.f)"><div style="font-size:24px;font-weight:800;color:#ef4444">'+absent+'</div><div style="font-size:9px;color:#64748b;margin-top:1px">❌ Absent</div></div>'
+    +'<div style="background:#fff;border-radius:12px;padding:11px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.06);cursor:pointer" data-f="late" onclick="window.loadAdminToday(this.dataset.f)"><div style="font-size:24px;font-weight:800;color:#f59e0b">'+late+'</div><div style="font-size:9px;color:#64748b;margin-top:1px">⏰ Late</div></div>'
+    +'<div style="background:#fff;border-radius:12px;padding:11px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.06);cursor:pointer" data-f="wfh" onclick="window.loadAdminToday(this.dataset.f)"><div style="font-size:24px;font-weight:800;color:#7c3aed">'+wfh+'</div><div style="font-size:9px;color:#64748b;margin-top:1px">🏠 WFH</div></div>'
+    +'</div>'
+    +dupWarn
+    +'<div style="background:#fff;border-radius:14px;padding:14px;box-shadow:0 2px 8px rgba(0,0,0,.06)">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">'
+    +'<div style="font-weight:700;font-size:13px;color:#0f172a">'+fmtDate(today)+' · '+emps.length+' staff</div>'
+    +(filterStatus&&filterStatus!=='all'
+      ?'<button data-f="all" onclick="window.loadAdminToday(this.dataset.f)" style="font-size:10px;padding:3px 9px;border-radius:6px;border:1px solid #e11d48;background:#fef2f2;color:#e11d48;cursor:pointer;font-weight:700">✕ Clear</button>'
+      :'<span style="font-size:10px;color:#94a3b8">Tap counters to filter</span>')
+    +'</div>'
+    +(rows.length?rows.join(''):'<div class="empty">No employees match this filter</div>')
+    +'</div>';
+};
+
+/* FIXED loadAdminOT: string keys + clickable cards */
+window.loadAdminOT_orig = window.loadAdminOT;
+window.loadAdminOT = function(){
+  var emps=getEmployees();
+  var allAtt=getAttendance();
+  var records=allAtt.filter(function(a){return ['WFH','OT-Office','OT-WFH'].includes(a.work_type);});
+  var el=document.getElementById('as-ot');
+  var now=new Date();var ym=now.getFullYear()+'-'+pad(now.getMonth()+1);
+  var stats={};
+  emps.filter(function(e){return e.active!==false;}).forEach(function(e){
+    var otRecs=records.filter(function(r){return sid(r.employee_id)===sid(e.id);});
+    var mRecs=otRecs.filter(function(r){return r.date.startsWith(ym);});
+    var otHrs=mRecs.filter(function(r){return r.work_type.includes('OT');}).reduce(function(s,r){
+      if(r.check_in&&r.check_out){var ci=r.check_in.split(':').map(Number);var co=r.check_out.split(':').map(Number);return s+(co[0]*60+co[1]-ci[0]*60-ci[1])/60;}return s;
+    },0);
+    var offRecs=allAtt.filter(function(a){return sid(a.employee_id)===sid(e.id)&&a.date.startsWith(ym)&&a.work_type==='Office';});
+    stats[e.id]={e:e,otDays:mRecs.filter(function(r){return r.work_type.includes('OT');}).length,otHrs:Math.round(otHrs*10)/10,wfh:mRecs.filter(function(r){return r.work_type==='WFH';}).length,office:offRecs.length};
+  });
+  el.innerHTML='<div style="background:linear-gradient(135deg,#f59e0b,#d97706);border-radius:13px;padding:12px;margin-bottom:11px;font-weight:800;font-size:14px;color:#fff">⏱️ OT & WFH — '+ym+' <span style="font-size:10px;font-weight:500;opacity:.85">Tap card to see detail</span></div>'
+    +Object.values(stats).map(function(st){
+      var otBadge=st.otHrs>0?'<span class="chip co" style="font-size:10px">'+st.otHrs+'h OT</span>':'';
+      var eid=sid(st.e.id);
+      return '<div class="ot-card" style="cursor:pointer" data-eid="'+eid+'" data-ename="'+st.e.name.replace(/"/g,'')+'" onclick="showOTDetail(this.dataset.eid,this.dataset.ename)">'
+        +'<div class="flex-bet"><div class="flex-row" style="gap:9px">'+avatarHtml(st.e,38,13)
+        +'<div><div style="font-size:12px;font-weight:700">'+st.e.name+'</div><div style="font-size:10px;color:#64748b">'+(st.e.designation||'')+'</div></div></div>'
+        +'<div style="display:flex;align-items:center;gap:5px">'+otBadge+'<span style="font-size:18px;color:#d97706">›</span></div></div>'
+        +'<div class="ot-stats">'
+        +'<div class="ot-st" style="background:#fef9c3;cursor:pointer" data-eid="'+eid+'" data-ename="'+st.e.name.replace(/"/g,'')+'" data-ft="OT" onclick="event.stopPropagation();showOTDetail(this.dataset.eid,this.dataset.ename,this.dataset.ft)"><div style="font-size:14px;font-weight:800;color:#a16207">'+st.otDays+'</div><div style="font-size:9px;color:#92400e">OT Days</div></div>'
+        +'<div class="ot-st" style="background:#fff7ed"><div style="font-size:14px;font-weight:800;color:#c2410c">'+st.otHrs+'h</div><div style="font-size:9px;color:#92400e">OT Hrs</div></div>'
+        +'<div class="ot-st" style="background:#f5f3ff;cursor:pointer" data-eid="'+eid+'" data-ename="'+st.e.name.replace(/"/g,'')+'" data-ft="WFH" onclick="event.stopPropagation();showOTDetail(this.dataset.eid,this.dataset.ename,this.dataset.ft)"><div style="font-size:14px;font-weight:800;color:#6d28d9">'+st.wfh+'</div><div style="font-size:9px;color:#7c3aed">WFH</div></div>'
+        +'<div class="ot-st" style="background:#f0fdf4"><div style="font-size:14px;font-weight:800;color:#16a34a">'+st.office+'</div><div style="font-size:9px;color:#15803d">Office</div></div>'
+        +'</div></div>';
+    }).join('');
+};
+
+window.showOTDetail = function(empId,empName,filterType){
+  var mo=document.createElement('div');mo.className='modal-ov';mo.id='ot-detail-modal';
+  var now=new Date();var ym=now.getFullYear()+'-'+pad(now.getMonth()+1);
+  var recs=getAttendance().filter(function(a){
+    return sid(a.employee_id)===sid(empId)&&a.date.startsWith(ym)&&['WFH','OT-Office','OT-WFH'].includes(a.work_type);
+  });
+  if(filterType)recs=recs.filter(function(r){return filterType==='OT'?r.work_type.includes('OT'):r.work_type==='WFH';});
+  recs.sort(function(a,b){return b.date.localeCompare(a.date);});
+  var box=document.createElement('div');box.className='modal-box';
+  box.innerHTML='<div class="mhdr"><div class="mtitle">📊 '+(empName||'Employee')+' — '+(filterType||'OT & WFH')+'</div><button class="mclose" id="otd-close">✕</button></div>'
+    +'<div style="font-size:11px;color:#64748b;margin-bottom:11px">Month: '+ym+' · '+recs.length+' records</div>'
+    +(recs.length?recs.map(function(r){
+      var hrs='';
+      if(r.check_in&&r.check_out){var ci=r.check_in.split(':').map(Number);var co=r.check_out.split(':').map(Number);hrs=Math.round(((co[0]*60+co[1])-(ci[0]*60+ci[1]))/60*10)/10+'h';}
+      var cls=r.work_type==='WFH'?'cp':'co';
+      return '<div style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid #f8fafc">'
+        +'<div><div style="font-size:12px;font-weight:700;color:#0f172a">'+fmtDate(r.date)+'</div>'
+        +'<div style="font-size:10px;color:#64748b;margin-top:2px">IN: '+(r.check_in?fmtTime(r.check_in):'—')+' → OUT: '+(r.check_out?fmtTime(r.check_out):'—')+'</div>'
+        +(r.note?'<div style="font-size:10px;color:#94a3b8;margin-top:1px">📝 '+r.note+'</div>':'')+'</div>'
+        +'<div style="text-align:right"><span class="chip '+cls+'">'+r.work_type+'</span>'+(hrs?'<div style="font-size:11px;font-weight:700;color:#d97706;margin-top:3px">'+hrs+'</div>':'')+'</div>'
+        +'</div>';
+    }).join(''):'<div class="empty">No records found</div>');
+  mo.appendChild(box);document.body.appendChild(mo);
+  document.getElementById('otd-close').onclick=function(){mo.remove();};
+  mo.onclick=function(ev){if(ev.target===mo)mo.remove();};
+};
+
+/* DELETE single attendance record */
+window.deleteSingleRecord = async function(recId,date){
+  if(!confirm('Delete this specific record?'))return;
+  try{
+    try{await getSB().from('attendance').delete().eq('id',sid(recId));}catch(e){}
+    var att=getAttendance().filter(function(a){return sid(a.id)!==sid(recId);});
+    saveAttendance(att);
     await window.fetchAttendance();
-    loadAttendanceTab();loadDashboard();
-    if(typeof isAdmin==='function' && isAdmin()) loadAdminToday();
-  };
+    toast('✅ Record deleted!');
+    if(typeof recCurrentDate!=='undefined'&&recCurrentDate)window.showDateRecords(recCurrentDate);
+    window.loadAdminToday();
+  }catch(e){toast('Error: '+e.message);}
+};
 
-  window.punchWFH = async function(type){
-    const now=new Date(), today=todayStr();
-    const time=pad(now.getHours())+':'+pad(now.getMinutes())+':'+pad(now.getSeconds());
-    const note=(document.getElementById('wfh-note')||{}).value||'';
-    const att=getAttendance();
+/* quickFix: open Fix Attendance for specific employee+date */
+window.quickFix = function(empId,date){
+  openFixAttendance();
+  setTimeout(function(){
+    var el=document.getElementById('fix-emp');
+    if(el){el.value=empId;loadExistingRecord();}
+    var dl=document.getElementById('fix-date');
+    if(dl&&date){dl.value=date;loadExistingRecord();}
+  },200);
+};
 
-    if(type==='in'){
-      const s=getSettings();
-      const[wh,wm]=(s.wfh_deadline||'10:00').split(':').map(Number);
-      const afterDeadline = now.getHours()>wh || (now.getHours()===wh && now.getMinutes()>=wm);
-      const status = (afterDeadline && wfhType==='WFH') ? 'Late' : 'WFH';
-      const rec={id:String(Date.now()),employee_id:String(currentProfile.id),date:today,check_in:time,check_out:'',work_type:wfhType,status:status,note:note};
-      att.push(rec); saveAttendance(att);
-      const ok = await saveAttendanceRec(rec);
-      if(ok===false) return;
-      toast('✅ '+wfhType+' checked in at '+time);
-    }else{
-      const idx=att.findIndex(a=>String(a.employee_id)===String(currentProfile.id)&&a.date===today&&!a.check_out&&(a.work_type==='WFH'||String(a.work_type||'').includes('OT-WFH')));
-      if(idx===-1){toast('Please check in first!');return;}
-      att[idx].check_out=time;
-      saveAttendance(att);
-      const ok = await saveAttendanceRec(att[idx]);
-      if(ok===false) return;
-      toast('✅ '+(att[idx].work_type||'WFH')+' checked out at '+time);
-    }
+/* FIXED saveFixAtt */
+window.saveFixAtt = async function(){
+  var empId=document.getElementById('fix-emp').value;
+  var date=document.getElementById('fix-date').value;
+  var ciRaw=document.getElementById('fix-ci').value;
+  var coRaw=document.getElementById('fix-co').value;
+  var note=(document.getElementById('fix-note').value||'').trim();
+  var workType=(document.getElementById('fix-ci-type').value)||'Office';
+  var coStatus=(document.getElementById('fix-co-status')||{}).value||'';
+  var errEl=document.getElementById('fix-err');
+  var okEl=document.getElementById('fix-ok');
+  var btn=document.getElementById('fix-save-btn');
 
-    await window.fetchAttendance();
-    loadAttendanceTab();loadDashboard();
-    if(typeof isAdmin==='function' && isAdmin()) loadAdminToday();
-  };
+  function showErr(m){if(errEl){errEl.textContent=m;errEl.style.display='block';}if(okEl)okEl.style.display='none';}
+  function showOk(m){if(okEl){okEl.textContent=m;okEl.style.display='block';}if(errEl)errEl.style.display='none';}
+  if(errEl)errEl.style.display='none';if(okEl)okEl.style.display='none';
 
-  window.saveFixAtt = async function(){
-    const empId=String(document.getElementById('fix-emp').value||'');
-    const date=document.getElementById('fix-date').value;
-    const ciEl=document.getElementById('fix-ci');
-    const coEl=document.getElementById('fix-co');
-    const ci=ciEl ? ciEl.value : '';
-    const co=coEl ? coEl.value : '';
-    const note=(document.getElementById('fix-note').value||'').trim();
-    const inTypeEl=document.getElementById('fix-ci-type');
-    const outTypeEl=document.getElementById('fix-co-type');
-    const typeEl=document.getElementById('fix-type');
-    const costatusEl=document.getElementById('fix-costatus');
+  if(!empId){showErr('Select an employee');return;}
+  if(!date){showErr('Select a date');return;}
+  if(!note){showErr('Admin note is required');return;}
+  if(!ciRaw&&!coRaw){showErr('Enter check-in or check-out time');return;}
+  if(btn){btn.disabled=true;btn.textContent='⏳ Saving...';}
 
-    const workType = (typeEl && typeEl.value) || (co ? ((outTypeEl&&outTypeEl.value)||'Office') : ((inTypeEl&&inTypeEl.value)||'Office'));
-    const checkoutStatus = (costatusEl && costatusEl.value && costatusEl.value !== 'Auto-detect') ? costatusEl.value : '';
-
-    if(!empId||!date){toast('Please select employee and date');return;}
-    if(!note){toast('Admin note is required');return;}
-
+  try{
     await window.ensureEmployeeInSupabase(empId);
     await window.fetchAttendance();
+    var att=getAttendance();
+    var existing=att.filter(function(a){return sid(a.employee_id)===sid(empId)&&a.date===date;});
+    var rec=existing.find(function(r){return r.work_type===workType;})||existing.find(function(r){return r.work_type==='Office';})||existing[0]||null;
+    var recId=rec?sid(rec.id):sid(Date.now());
 
-    const att=getAttendance();
-    let rec = att.find(a=>String(a.employee_id)===empId && a.date===date && String(a.work_type||'Office')===String(workType))
-           || att.find(a=>String(a.employee_id)===empId && a.date===date);
-
-    if(rec){
-      if(ci) rec.check_in = ci + ':00';
-      if(co) rec.check_out = co + ':00';
-      rec.work_type = workType;
-      rec.status = 'Fixed';
-      rec.admin_fix = true;
-      rec.admin_note = note;
-      rec.note = note;
-      if(checkoutStatus) rec.checkout_status = checkoutStatus;
-    }else{
-      rec = {
-        id: String(Date.now()),
-        employee_id: empId,
-        date: date,
-        check_in: ci ? ci + ':00' : '',
-        check_out: co ? co + ':00' : '',
-        work_type: workType,
-        status: 'Fixed',
-        admin_fix: true,
-        admin_note: note,
-        note: note
-      };
-      if(checkoutStatus) rec.checkout_status = checkoutStatus;
-      att.push(rec);
+    // auto-detect checkout status
+    var finalCo=coStatus;
+    if(!finalCo&&coRaw){
+      var coParts=coRaw.split(':').map(Number);var coMin=coParts[0]*60+(coParts[1]||0);
+      var s=getSettings();
+      var eh=(s.early_checkout_before||'17:15').split(':').map(Number);
+      var sl=(s.short_leave_pm_end||'18:00').split(':').map(Number);
+      var nx=(s.checkout_normal_end||'18:10').split(':').map(Number);
+      if(coMin<eh[0]*60+eh[1])finalCo='Half Day';
+      else if(coMin<=sl[0]*60+sl[1])finalCo='Short Leave PM';
+      else if(coMin<=nx[0]*60+nx[1])finalCo='Normal Exit';
+      else finalCo='Overtime';
     }
 
+    var fixedRec={id:recId,employee_id:sid(empId),date:date,
+      check_in:ciRaw?(ciRaw+':00'):(rec&&rec.check_in||null),
+      check_out:coRaw?(coRaw+':00'):(rec&&rec.check_out||null),
+      work_type:workType,status:'Fixed',note:note,admin_fix:true,admin_note:note,
+      lat:rec&&rec.lat||null,lon:rec&&rec.lon||null,
+      checkout_status:finalCo||null,late_minutes:0,overtime_minutes:0};
+
+    var li=att.findIndex(function(a){return sid(a.id)===recId;});
+    if(li>=0)att[li]=Object.assign({},att[li],fixedRec);else att.unshift(fixedRec);
     saveAttendance(att);
-    const ok = await saveAttendanceRec(rec);
-    if(ok===false){
-      toast('⚠️ Local save done, cloud save pending', 4000);
-    }else{
-      toast('✅ Attendance record fixed!', 3000);
-    }
 
+    var ok=await window.saveAttendanceRec(fixedRec);
     await window.fetchAttendance();
-    document.getElementById('fix-att-modal')?.remove();
-    loadAdminToday();loadDashboard();loadAttendanceTab();
-  };
 
-  window.seedEmployeesToSupabase = async function(){
-    const emps = getEmployees() || [];
-    for(const e of emps){
-      try{ await window.ensureEmployeeInSupabase(e.id); }catch(_){}
+    if(ok){
+      showOk('✅ Fixed! IN:'+(fixedRec.check_in?fmtTime(fixedRec.check_in):'—')+' OUT:'+(fixedRec.check_out?fmtTime(fixedRec.check_out):'—')+' '+workType);
+      toast('✅ Attendance fixed!');
+      setTimeout(function(){var m=document.getElementById('fix-att-modal');if(m)m.remove();},2000);
+    }else{
+      showErr('⚠️ Saved locally. Cloud sync failed — check SQL setup.');
     }
-  };
+    window.loadAdminToday();loadDashboard();
+    if(document.getElementById('as-records')&&document.getElementById('as-records').style.display!=='none')window.showDateRecords(date);
+  }catch(e){showErr('❌ Error: '+(e.message||e));}
+  finally{if(btn){btn.disabled=false;btn.textContent='✅ Save Fix';}}
+};
 
-  const _origInitPortal = typeof initPortal === 'function' ? initPortal : null;
-  if(_origInitPortal){
-    window.initPortal = function(){
-      const res = _origInitPortal.apply(this, arguments);
-      setTimeout(()=>{ window.seedEmployeesToSupabase().catch(()=>{}); }, 800);
-      return res;
-    };
+/* FIXED clearAttRecord */
+window.clearAttRecord = async function(){
+  var empId=document.getElementById('fix-emp').value;
+  var date=document.getElementById('fix-date').value;
+  var note=(document.getElementById('fix-note').value||'').trim();
+  var errEl=document.getElementById('fix-err');var okEl=document.getElementById('fix-ok');
+  function showErr(m){if(errEl){errEl.textContent=m;errEl.style.display='block';}if(okEl)okEl.style.display='none';}
+  function showOk(m){if(okEl){okEl.textContent=m;okEl.style.display='block';}if(errEl)errEl.style.display='none';}
+  if(!empId){showErr('Select employee');return;}
+  if(!date){showErr('Select date');return;}
+  if(!note){showErr('Admin note required');return;}
+  if(!confirm(date+' ka record delete karna hai?'))return;
+  try{
+    await window.fetchAttendance();
+    var att=getAttendance();
+    var toDel=att.filter(function(a){return sid(a.employee_id)===sid(empId)&&a.date===date;});
+    if(!toDel.length){showErr('No records found');return;}
+    var errs=[];
+    for(var i=0;i<toDel.length;i++){
+      try{var r=await getSB().from('attendance').delete().eq('id',sid(toDel[i].id));if(r.error)errs.push(r.error.message);}
+      catch(de){errs.push(de.message||'err');}
+    }
+    saveAttendance(att.filter(function(a){return!(sid(a.employee_id)===sid(empId)&&a.date===date);}));
+    await window.fetchAttendance();
+    if(errs.length)showOk('⚠️ Locally cleared. Cloud errors: '+errs.join(', '));
+    else{showOk('✅ '+toDel.length+' record(s) deleted!');toast('✅ Cleared!');setTimeout(function(){var m=document.getElementById('fix-att-modal');if(m)m.remove();},2000);}
+    window.loadAdminToday();loadDashboard();
+  }catch(e){showErr('❌ Error: '+(e.message||e));}
+};
+
+/* FIXED renderRecords: duplicate detection + delete button */
+window.renderRecords_orig = window.renderRecords;
+window.renderRecords = function(data,date){
+  var el=document.getElementById('rec-results');if(!el)return;
+  var present=data.filter(function(r){return r.status==='present'||r.status==='early';}).length;
+  var late=data.filter(function(r){return r.status==='late';}).length;
+  var absent=data.filter(function(r){return r.status==='absent';}).length;
+  var shortam=data.filter(function(r){return r.status==='shortam';}).length;
+  var wfh=data.filter(function(r){return r.status==='wfh';}).length;
+  var d=new Date(date+'T00:00:00');
+  var days=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  var months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  var dateLabel=days[d.getDay()]+', '+d.getDate()+' '+months[d.getMonth()]+' '+d.getFullYear();
+  // duplicate detection
+  var allAtt=getAttendance().filter(function(a){return a.date===date;});
+  var dupMap={};
+  allAtt.forEach(function(a){var k=sid(a.employee_id);if(!dupMap[k])dupMap[k]=[];dupMap[k].push(a);});
+  var dupCount=Object.values(dupMap).filter(function(arr){return arr.length>1;}).length;
+  var dupWarn=dupCount?'<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;padding:9px 13px;margin-bottom:10px;font-size:11px;font-weight:700;color:#dc2626">⚠️ '+dupCount+' employee(s) have duplicate records — click 🗑️ to delete extras</div>':'';
+
+  var html='<div style="font-weight:700;font-size:13px;color:#0f172a;margin-bottom:10px">'+dateLabel+'</div>'
+    +dupWarn
+    +'<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:5px;margin-bottom:12px">'
+    +'<div data-f="present" class="rec-cnt" style="background:#f0fdf4;border-radius:10px;padding:8px 4px;text-align:center;cursor:pointer;border:1.5px solid #86efac"><div style="font-size:18px;font-weight:800;color:#16a34a">'+present+'</div><div style="font-size:9px;color:#16a34a;font-weight:700">Present</div></div>'
+    +'<div data-f="late" class="rec-cnt" style="background:#fef9c3;border-radius:10px;padding:8px 4px;text-align:center;cursor:pointer;border:1.5px solid #fde047"><div style="font-size:18px;font-weight:800;color:#a16207">'+late+'</div><div style="font-size:9px;color:#a16207;font-weight:700">Late</div></div>'
+    +'<div data-f="absent" class="rec-cnt" style="background:#fef2f2;border-radius:10px;padding:8px 4px;text-align:center;cursor:pointer;border:1.5px solid #fca5a5"><div style="font-size:18px;font-weight:800;color:#dc2626">'+absent+'</div><div style="font-size:9px;color:#dc2626;font-weight:700">Absent</div></div>'
+    +'<div data-f="shortam" class="rec-cnt" style="background:#fff7ed;border-radius:10px;padding:8px 4px;text-align:center;cursor:pointer;border:1.5px solid #fed7aa"><div style="font-size:18px;font-weight:800;color:#c2410c">'+shortam+'</div><div style="font-size:9px;color:#c2410c;font-weight:700">Short AM</div></div>'
+    +'<div data-f="wfh" class="rec-cnt" style="background:#f5f3ff;border-radius:10px;padding:8px 4px;text-align:center;cursor:pointer;border:1.5px solid #ddd6fe"><div style="font-size:18px;font-weight:800;color:#7c3aed">'+wfh+'</div><div style="font-size:9px;color:#7c3aed;font-weight:700">WFH</div></div>'
+    +'</div>';
+
+  if(!data.length){html+='<div class="empty">No records for this filter</div>';}
+  else{
+    html+=data.map(function(r){
+      var av=avatarHtml(r.e,38,13);
+      var chipColor={present:'cg',early:'cbl',late:'cy',absent:'cr',shortam:'co',wfh:'cp'}[r.status]||'cgr';
+      var coSt=r.a&&r.a.checkout_status?' · '+r.a.checkout_status:'';
+      var empRecs=dupMap[sid(r.e.id)]||[];
+      var dupsHtml='';
+      if(empRecs.length>1){
+        dupsHtml='<div style="margin-top:6px;padding:7px;background:#fef2f2;border-radius:8px">'
+          +'<div style="font-size:9px;font-weight:700;color:#dc2626;margin-bottom:4px">⚠️ '+empRecs.length+' records — delete duplicates:</div>'
+          +empRecs.map(function(rec){
+            return '<div style="display:flex;align-items:center;justify-content:space-between;padding:2px 0">'
+              +'<span style="font-size:9px;color:#64748b">'+(rec.work_type||'Office')+': '+(rec.check_in?fmtTime(rec.check_in):'—')+' → '+(rec.check_out?fmtTime(rec.check_out):'—')+(rec.status==='Fixed'?' ✓Fix':'')+'</span>'
+              +'<button style="padding:2px 7px;border-radius:5px;border:none;background:#fee2e2;color:#dc2626;font-size:9px;font-weight:700;cursor:pointer"'
+              +' data-rid="'+sid(rec.id)+'" data-dt="'+date+'" onclick="window.deleteSingleRecord(this.dataset.rid,this.dataset.dt)">🗑️ Del</button>'
+              +'</div>';
+          }).join('')
+          +'</div>';
+      }
+      return '<div style="padding:10px 0;border-bottom:1px solid #f8fafc">'
+        +'<div style="display:flex;align-items:center;gap:9px">'+av
+        +'<div style="flex:1"><div style="font-size:12px;font-weight:700;color:#0f172a">'+r.e.name+'</div>'
+        +'<div style="font-size:10px;color:#64748b">'+r.e.designation+' · EMP-'+r.e.emp_id+'</div>'
+        +'<div style="font-size:10px;color:#94a3b8;margin-top:2px">IN: '+r.ci+' → OUT: '+r.co+(r.wt!=='—'?' · '+r.wt:'')+coSt+'</div></div>'
+        +'<div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">'
+        +'<span class="chip '+chipColor+'">'+r.lbl+'</span>'
+        +'<button style="padding:3px 8px;border-radius:6px;border:none;background:#ede9fe;color:#6d28d9;font-size:9px;font-weight:700;cursor:pointer"'
+        +' data-eid="'+sid(r.e.id)+'" data-dt="'+date+'" onclick="quickFix(this.dataset.eid,this.dataset.dt)">🔧 Fix</button>'
+        +'</div></div>'+dupsHtml+'</div>';
+    }).join('');
   }
+  el.innerHTML=html;
+  el.querySelectorAll('.rec-cnt').forEach(function(d){d.onclick=function(){window.filterRecords(d.dataset.f);};});
+};
+
+/* FIXED exportCustom */
+window.exportCustom = function(){
+  var fromEl=document.getElementById('exp-from');var toEl=document.getElementById('exp-to');
+  if(!fromEl||!toEl){toast('Reload Export tab first');return;}
+  var from=fromEl.value,to=toEl.value;
+  if(!from||!to){toast('Select both From and To dates');return;}
+  if(from>to){toast('From date must be before To date');return;}
+  exportCSVRange(from,to,'Custom_'+from+'_to_'+to);
+};
+
+/* FIXED openFixAttendance with error display + auto-fill */
+window.openFixAttendance = function(){
+  var mo=document.createElement('div');mo.className='modal-cen-ov';mo.id='fix-att-modal';
+  var emps=getEmployees().filter(function(e){return e.active!==false;});
+  mo.innerHTML='<div class="modal-cen" style="max-width:420px">'
+    +'<div class="mhdr"><div class="mtitle">🔧 Fix Attendance</div><button class="mclose" id="fix-close">✕</button></div>'
+    +'<div class="fix-att-warn">⚠️ Admin only — select employee + date, record will auto-fill below.</div>'
+    +'<div id="fix-err" style="background:#fee2e2;color:#991b1b;border-radius:9px;padding:9px 13px;margin-bottom:11px;font-size:12px;font-weight:600;display:none"></div>'
+    +'<div id="fix-ok" style="background:#dcfce7;color:#166534;border-radius:9px;padding:9px 13px;margin-bottom:11px;font-size:12px;font-weight:600;display:none"></div>'
+    +'<div class="fld"><label>Employee *</label>'
+    +'<select id="fix-emp" onchange="loadExistingRecord()"><option value="">— Select Employee —</option>'
+    +emps.map(function(e){return '<option value="'+e.id+'">'+e.name+' (EMP-'+e.emp_id+')</option>';}).join('')
+    +'</select></div>'
+    +'<div class="fld"><label>Date *</label><input id="fix-date" type="date" value="'+todayStr()+'" onchange="loadExistingRecord()"/></div>'
+    +'<div id="fix-existing-info" style="display:none;background:#f0f4f8;border-radius:10px;padding:10px;margin-bottom:11px;font-size:11px;color:#475569;font-weight:600;line-height:1.7"></div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'
+    +'<div class="fld"><label>Check-in Time</label><input id="fix-ci" type="time"/></div>'
+    +'<div class="fld"><label>Work Type</label><select id="fix-ci-type"><option>Office</option><option>WFH</option><option>OT-Office</option><option>OT-WFH</option></select></div>'
+    +'</div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'
+    +'<div class="fld"><label>Check-out Time</label><input id="fix-co" type="time"/></div>'
+    +'<div class="fld"><label>Checkout Status</label><select id="fix-co-status"><option value="">Auto-detect</option><option>Normal Exit</option><option>Short Leave PM</option><option>Half Day</option><option>Overtime</option></select></div>'
+    +'</div>'
+    +'<div class="fld"><label>Admin Note (Reason) *</label><input id="fix-note" placeholder="e.g. GPS failure, system error..."/></div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'
+    +'<button onclick="window.clearAttRecord()" style="padding:12px;border-radius:11px;background:#fee2e2;border:1px solid #fca5a5;color:#dc2626;font-weight:700;cursor:pointer;font-size:12px">🗑️ Clear Record</button>'
+    +'<button id="fix-save-btn" onclick="window.saveFixAtt()" style="padding:12px;border-radius:11px;background:linear-gradient(135deg,#4f46e5,#6366f1);border:none;color:#fff;font-weight:800;cursor:pointer;font-size:12px">✅ Save Fix</button>'
+    +'</div></div>';
+  document.body.appendChild(mo);
+  document.getElementById('fix-close').onclick=function(){mo.remove();};
+};
+
+window.loadExistingRecord = function(){
+  var empId=document.getElementById('fix-emp').value;
+  var date=document.getElementById('fix-date').value;
+  var info=document.getElementById('fix-existing-info');
+  var ciEl=document.getElementById('fix-ci');var coEl=document.getElementById('fix-co');
+  var typeEl=document.getElementById('fix-ci-type');var coStEl=document.getElementById('fix-co-status');
+  if(!info)return;
+  if(ciEl)ciEl.value='';if(coEl)coEl.value='';if(typeEl)typeEl.value='Office';if(coStEl)coStEl.value='';
+  if(!empId||!date){info.style.display='none';return;}
+  var recs=getAttendance().filter(function(a){return sid(a.employee_id)===sid(empId)&&a.date===date;});
+  if(!recs.length){info.style.display='block';info.innerHTML='📭 No record found — a new record will be created.';return;}
+  var rec=recs.find(function(r){return r.work_type==='Office';})||recs[0];
+  info.style.display='block';
+  info.innerHTML='📋 Existing: IN: <strong>'+(rec.check_in?fmtTime(rec.check_in):'—')+'</strong> OUT: <strong>'+(rec.check_out?fmtTime(rec.check_out):'—')+'</strong> Type: <strong>'+(rec.work_type||'Office')+'</strong> Status: <strong>'+(rec.status||'—')+'</strong>'+(rec.admin_fix?' <span style="color:#6d28d9">[Fixed]</span>':'');
+  if(rec.check_in&&ciEl){var p=rec.check_in.split(':');if(p.length>=2)ciEl.value=p[0]+':'+p[1];}
+  if(rec.check_out&&coEl){var p2=rec.check_out.split(':');if(p2.length>=2)coEl.value=p2[0]+':'+p2[1];}
+  if(rec.work_type&&typeEl)typeEl.value=rec.work_type;
+  if(rec.checkout_status&&coStEl)coStEl.value=rec.checkout_status;
+};
+
+/* Seed employees on startup */
+window.seedEmployeesToSupabase = async function(){
+  var emps=getEmployees()||[];
+  for(var i=0;i<emps.length;i++){try{await window.ensureEmployeeInSupabase(emps[i].id);}catch(_){}}
+};
+
+var _origInit=typeof initPortal==='function'?initPortal:null;
+if(_origInit){
+  window.initPortal=function(){
+    var res=_origInit.apply(this,arguments);
+    setTimeout(function(){window.seedEmployeesToSupabase().catch(function(){});},1200);
+    return res;
+  };
+}
+
 })();
 </script>
 
