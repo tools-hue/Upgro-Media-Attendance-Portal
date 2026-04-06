@@ -257,6 +257,18 @@ button{cursor:pointer}
 .date-range-row{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-bottom:9px}
 .settings-card{background:#fff;border-radius:14px;padding:14px;box-shadow:0 2px 10px rgba(0,0,0,.06);margin-bottom:10px}
 .fix-att-warn{background:#fff7ed;border:1px solid #fed7aa;border-radius:11px;padding:10px 13px;margin-bottom:12px;font-size:12px;font-weight:600;color:#c2410c}
+
+.staff-row{overflow:hidden}
+.staff-row *{max-width:100%}
+.staff-acts button{white-space:normal}
+@media (max-width:480px){
+  .staff-row .flex-bet{display:block!important}
+  .staff-row .flex-bet > div:last-child{margin-top:10px}
+  .staff-acts{gap:6px}
+  .staff-acts .mini-btn,.staff-acts button{flex:1 1 calc(50% - 6px);min-width:130px}
+  .summary-row,.att-row,.holiday-row,.tr-row{gap:8px}
+}
+
 </style>
 </head>
 <body>
@@ -615,6 +627,8 @@ async function fetchEmployees(){
     if(data&&data.length){
       // normalize date fields
       data.forEach(function(e){
+        e.id=sidSafe(e.id);
+        if(e.emp_id!=null)e.emp_id=sidSafe(e.emp_id);
         if(e.date_of_birth)e.date_of_birth=e.date_of_birth.substring(0,10);
         if(e.joining_date)e.joining_date=e.joining_date.substring(0,10);
       });
@@ -875,12 +889,62 @@ function showMain(){
     }
   }catch(e){}
   // ✅ Auto-refresh for admin every 15 seconds
+  startUserAutoRefresh();
   if(currentProfile&&(currentProfile.is_admin||currentProfile.role==='admin')){
     startAdminAutoRefresh();
   }
 }
 
 var _adminRefreshTimer=null;
+var _userRefreshTimer=null;
+
+function sidSafe(v){return String(v==null?'':v);}
+function refreshCurrentProfileFromStore(){
+  if(!currentProfile) return null;
+  try{
+    var emps=getEmployees()||[];
+    var found=emps.find(function(e){
+      return sidSafe(e.id)===sidSafe(currentProfile.id) || (e.email&&currentProfile.email&&String(e.email).toLowerCase()===String(currentProfile.email).toLowerCase());
+    });
+    if(found){
+      currentProfile=found;
+      currentUser=found;
+      setData('session',{id:found.id,email:found.email});
+    }
+    return currentProfile;
+  }catch(e){return currentProfile;}
+}
+
+function startUserAutoRefresh(){
+  if(_userRefreshTimer) clearInterval(_userRefreshTimer);
+  _userRefreshTimer=setInterval(function(){
+    if(!currentProfile) return clearInterval(_userRefreshTimer);
+    Promise.all([fetchEmployees(),fetchAttendance(),fetchLeaves(),fetchSettings()]).then(function(){
+      refreshCurrentProfileFromStore();
+      var active=document.querySelector('.nav-btn .nav-lbl.on');
+      var activeText=active?active.textContent.trim().toLowerCase():'home';
+      loadDashboard();
+      if(activeText==='check in') loadAttendanceTab();
+      if(activeText==='leave') loadMyLeaves();
+      if(activeText==='profile') loadProfileTab();
+      if(activeText==='admin' && (currentProfile.is_admin||currentProfile.role==='admin')){
+        var activeAtab=document.querySelector('.atab.on');
+        if(activeAtab){
+          var tabId=activeAtab.dataset.tab||'today';
+          if(tabId==='today'||tabId==='') loadAdminToday();
+          else if(tabId==='records') loadAdminRecords&&loadAdminRecords();
+          else if(tabId==='leaves') loadAdminLeaves&&loadAdminLeaves();
+          else if(tabId==='staff') loadAdminStaff&&loadAdminStaff();
+          else if(tabId==='settings') loadAdminSettings&&loadAdminSettings();
+          else if(tabId==='export') loadAdminExport&&loadAdminExport();
+          else if(tabId==='mark') loadAdminMark&&loadAdminMark();
+          else if(tabId==='ot') loadAdminOT&&loadAdminOT();
+        }
+      }
+    }).catch(function(){});
+  },10000);
+}
+
 function startAdminAutoRefresh(){
   if(_adminRefreshTimer) clearInterval(_adminRefreshTimer);
   // Refresh every 15 seconds for admin
@@ -949,6 +1013,9 @@ function doSignOut(){
   if(typeof _adminRefreshTimer!=='undefined'&&_adminRefreshTimer){
     clearInterval(_adminRefreshTimer);_adminRefreshTimer=null;
   }
+  if(typeof _userRefreshTimer!=='undefined'&&_userRefreshTimer){
+    clearInterval(_userRefreshTimer);_userRefreshTimer=null;
+  }
   currentUser=null;currentProfile=null;
   setData('session',null);
   try{localStorage.removeItem('ugm_session');}catch(e){}
@@ -1011,6 +1078,7 @@ function switchTab(id,btn){
 /* ══ DASHBOARD ════════════════════════════════════════════ */
 function loadDashboard(){
   if(!currentProfile)return;
+  refreshCurrentProfileFromStore();
   setAvatarEls(currentProfile);
   document.getElementById('tb-name').textContent=currentProfile.name||'';
   document.getElementById('tb-desig').textContent=(currentProfile.designation||'')+(currentProfile.emp_id?' · EMP-'+currentProfile.emp_id:'');
@@ -1028,7 +1096,9 @@ function loadDashboard(){
 
 function loadTodayAttendance(){
   const today=todayStr();
-  const rec=getAttendance().find(a=>a.employee_id===currentProfile.id&&a.date===today&&a.work_type==='Office');
+  const rec=getAttendance().find(function(a){
+    return sidSafe(a.employee_id)===sidSafe(currentProfile.id) && a.date===today && a.work_type==='Office';
+  });
   document.getElementById('dash-ci').textContent=rec&&rec.check_in?fmtTime(rec.check_in):'—';
   document.getElementById('dash-co').textContent=rec&&rec.check_out?fmtTime(rec.check_out):'—';
   document.getElementById('dash-ci-status').textContent=rec?getStatusLabel(rec):'—';
@@ -1037,7 +1107,9 @@ function loadTodayAttendance(){
 function loadStats(){
   const now=new Date();const y=now.getFullYear();const mo=now.getMonth()+1;
   const from=y+'-'+pad(mo)+'-01';
-  const arr=getAttendance().filter(a=>a.employee_id===currentProfile.id&&a.date>=from);
+  const arr=getAttendance().filter(function(a){
+    return sidSafe(a.employee_id)===sidSafe(currentProfile.id) && a.date>=from;
+  });
   const present=arr.filter(a=>a.check_in&&getAttLabel(a)==='Present').length;
   const early=arr.filter(a=>a.check_in&&getAttLabel(a)==='Early').length;
   const late=arr.filter(a=>isLate(a)).length;
@@ -1049,13 +1121,14 @@ function loadStats(){
     '<div class="stat-card" style="background:#fef2f2;border-color:#fecaca"><div style="font-size:9px;font-weight:700;color:#991b1b">❌ Absent</div><div style="font-size:24px;font-weight:800;color:#dc2626;margin-top:1px">'+abs+'</div><div style="font-size:9px;color:#fca5a5">This month</div></div>'+
     '<div class="stat-card" style="background:#f5f3ff;border-color:#ddd6fe"><div style="font-size:9px;font-weight:700;color:#6d28d9">🏠 WFH</div><div style="font-size:24px;font-weight:800;color:#7c3aed;margin-top:1px">'+wfhc+'</div><div style="font-size:9px;color:#c4b5fd">This month</div></div>';
   if(late>=3){document.getElementById('late-warn').style.display='flex';document.getElementById('late-warn-txt').textContent='You have '+late+' late marks this month'+(late>=4?' — 1 day salary deducted!':'');}
+  else{document.getElementById('late-warn').style.display='none';}
   document.getElementById('dash-summary').innerHTML=
     '<div class="summary-row"><span style="font-size:12px;color:#475569">Working Days</span><span style="font-weight:700">'+(present+early+late)+'</span></div>'+
     '<div class="summary-row"><span style="font-size:12px;color:#475569">Early / On Time</span><span style="font-weight:700;color:#16a34a">'+(present+early)+'</span></div>'+
     '<div class="summary-row"><span style="font-size:12px;color:#475569">Late</span><span style="font-weight:700;color:#d97706">'+late+'</span></div>'+
     '<div class="summary-row"><span style="font-size:12px;color:#475569">Absent</span><span style="font-weight:700;color:#dc2626">'+abs+'</span></div>'+
     '<div class="summary-row"><span style="font-size:12px;color:#475569">WFH Days</span><span style="font-weight:700;color:#7c3aed">'+wfhc+'</span></div>';
-  const rec=getAttendance().filter(a=>a.employee_id===currentProfile.id).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,7);
+  const rec=getAttendance().filter(function(a){return sidSafe(a.employee_id)===sidSafe(currentProfile.id);}).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,7);
   document.getElementById('dash-recent').innerHTML=rec.length?rec.map(r=>'<div class="att-row"><div><div style="font-size:12px;font-weight:700;color:#0f172a">'+fmtDate(r.date)+'</div><div style="font-size:10px;color:#94a3b8">'+(r.work_type||'Office')+'</div></div><div style="text-align:right"><div style="font-size:11px;color:#64748b">'+(r.check_in?fmtTime(r.check_in):'—')+' → '+(r.check_out?fmtTime(r.check_out):'—')+'</div><span class="chip '+statusClass(r)+'">'+getStatusLabel(r)+'</span></div></div>').join(''):'<div class="empty">No records yet</div>';
 }
 
@@ -2939,11 +3012,11 @@ function initPortal(){
   var sess=getData('session',null);
   if(sess&&sess.id&&sess.email){
     var emps=getEmployees();
-    var found=emps.find(function(e){return e.id===sess.id&&e.email===sess.email;});
+    var found=emps.find(function(e){return sidSafe(e.id)===sidSafe(sess.id)&&e.email===sess.email;});
     if(found&&found.active!==false&&!found.blocked){
       currentUser=found;currentProfile=found;
       showMain();
-      // Start admin auto-refresh if admin
+      startUserAutoRefresh();
       if(found.is_admin||found.role==='admin') startAdminAutoRefresh();
       return;
     }
@@ -3570,263 +3643,6 @@ if(_origInit){
   };
 }
 
-})();
-</script>
-
-
-<style id="ugm-responsive-fixes">
-/* ===== Responsive + staff fixes ===== */
-#app{width:100%;max-width:480px;margin:0 auto}
-.content,.admin-content,.modal-box,.modal-cen{overflow-x:hidden}
-.staff-card{background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:12px;margin-bottom:10px;box-shadow:0 2px 10px rgba(0,0,0,.05)}
-.staff-main{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:start}
-.staff-left{display:flex;align-items:flex-start;gap:10px;min-width:0;cursor:pointer}
-.staff-info{min-width:0;flex:1}
-.staff-name{font-size:13px;font-weight:800;color:#0f172a;word-break:break-word}
-.staff-meta,.staff-mail,.staff-foot{font-size:10px;color:#64748b;word-break:break-word}
-.staff-mail{color:#94a3b8;margin-top:2px}
-.staff-chip-row{display:flex;gap:5px;flex-wrap:wrap;margin-top:5px}
-.staff-stats{display:grid;grid-template-columns:repeat(2,minmax(56px,1fr));gap:4px;min-width:124px}
-.staff-stat{border-radius:8px;padding:5px 6px;text-align:center}
-.staff-stat-num{font-size:14px;font-weight:800;line-height:1}
-.staff-stat-lbl{font-size:8px;font-weight:700;margin-top:2px}
-.staff-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
-.staff-actions .btn-sm{flex:1 1 calc(50% - 6px);min-width:120px;max-width:100%;white-space:normal;line-height:1.2;padding:8px 10px}
-@media (max-width:420px){
-  .tb-row1,.tb-clock-row{gap:8px}
-  .tb-logo-row{min-width:0;flex:1}
-  .tb-brand,.tb-user-name{word-break:break-word}
-  .btn-signout{padding:5px 8px;font-size:10px}
-  .admin-tabs{grid-template-columns:repeat(4,1fr);gap:6px}
-  .atab{font-size:9px;padding:9px 4px}
-  .staff-main{grid-template-columns:1fr}
-  .staff-stats{width:100%;min-width:0}
-  .staff-actions .btn-sm{flex:1 1 100%;min-width:0}
-  .modal-box{padding:16px}
-  .date-range-row,.crop-btns,.wfh-type-row{grid-template-columns:1fr !important}
-}
-@media (max-width:360px){
-  .content{padding:10px 8px 6px}
-  .admin-content{padding:10px}
-  .tb-time{font-size:24px}
-}
-</style>
-<script id="ugm-live-sync-fixes">
-(function(){
-  function sid(v){ return String(v || ''); }
-  function refreshCurrentProfileFromStore(){
-    try{
-      var sess = getData('session', null);
-      if(!sess || !sess.id) return null;
-      var emps = getEmployees() || [];
-      var found = emps.find(function(e){
-        return sid(e.id)===sid(sess.id) || sid(e.emp_id)===sid(sess.id) || (sess.email && String(e.email||'').toLowerCase()===String(sess.email).toLowerCase());
-      });
-      if(found){
-        currentUser = found;
-        currentProfile = found;
-        setData('session',{id:sid(found.id),email:found.email||'',name:found.name||''});
-      }
-      return found || null;
-    }catch(e){ return null; }
-  }
-
-  var _userSyncTimer = null;
-  window.stopUserLiveSync = function(){
-    if(_userSyncTimer){ clearInterval(_userSyncTimer); _userSyncTimer = null; }
-  };
-  window.refreshOwnDashboardData = async function(){
-    try{
-      if(!currentProfile) return;
-      await Promise.allSettled([fetchEmployees(), fetchAttendance(), fetchLeaves(), fetchSettings()]);
-      refreshCurrentProfileFromStore();
-      var main = document.getElementById('main-app');
-      if(main && main.style.display !== 'none'){
-        if(typeof loadDashboard === 'function') loadDashboard();
-        if(typeof loadProfileTab === 'function') loadProfileTab();
-        if(typeof loadAttendanceTab === 'function') loadAttendanceTab();
-        if(typeof loadMyLeaves === 'function') loadMyLeaves();
-      }
-    }catch(e){ console.warn('refreshOwnDashboardData:', e); }
-  };
-  window.startUserLiveSync = function(){
-    window.stopUserLiveSync();
-    if(!currentProfile) return;
-    _userSyncTimer = setInterval(function(){
-      if(!currentProfile){ window.stopUserLiveSync(); return; }
-      window.refreshOwnDashboardData();
-    }, 15000);
-  };
-
-  var originalShowMain = window.showMain;
-  window.showMain = function(){
-    if(typeof originalShowMain === 'function') originalShowMain();
-    refreshCurrentProfileFromStore();
-    window.startUserLiveSync();
-    setTimeout(function(){ window.refreshOwnDashboardData(); }, 600);
-  };
-
-  var originalDoLogin = window.doLogin;
-  window.doLogin = function(){
-    if(typeof originalDoLogin === 'function') originalDoLogin();
-    setTimeout(function(){
-      refreshCurrentProfileFromStore();
-      window.startUserLiveSync();
-      window.refreshOwnDashboardData();
-    }, 300);
-  };
-
-  var originalDoSignOut = window.doSignOut;
-  window.doSignOut = function(){
-    window.stopUserLiveSync();
-    if(typeof originalDoSignOut === 'function') originalDoSignOut();
-  };
-
-  document.addEventListener('visibilitychange', function(){
-    if(!document.hidden && currentProfile){ window.refreshOwnDashboardData(); }
-  });
-  window.addEventListener('focus', function(){
-    if(currentProfile){ window.refreshOwnDashboardData(); }
-  });
-
-  window.loadDashboard = function(){
-    refreshCurrentProfileFromStore();
-    if(!currentProfile)return;
-    setAvatarEls(currentProfile);
-    document.getElementById('tb-name').textContent=currentProfile.name||'';
-    document.getElementById('tb-desig').textContent=(currentProfile.designation||'')+(currentProfile.emp_id?' · EMP-'+currentProfile.emp_id:'');
-    var isAdm=currentProfile.is_admin||currentProfile.role==='admin';
-    document.getElementById('tb-admin-pill').innerHTML=isAdm?'<span class="admin-pill">ADMIN</span>':'';
-    document.getElementById('dash-name').textContent=currentProfile.name||'';
-    document.getElementById('dash-meta').textContent=(currentProfile.designation||'')+(currentProfile.department?' · '+currentProfile.department:'');
-    document.getElementById('dash-email').textContent=currentProfile.email||'';
-    document.getElementById('dash-status-emoji').textContent=currentProfile.status_emoji||'😊';
-    document.getElementById('dash-status-text').textContent=currentProfile.status_text||'Tap to set your status.';
-    document.getElementById('profile-status-emoji').textContent=currentProfile.status_emoji||'😊';
-    document.getElementById('profile-status-text').textContent=currentProfile.status_text||'Set your status.';
-    loadTodayAttendance(); loadStats(); buildTicker(); buildTimeRules('time-rules-1'); buildTimeRules('time-rules-2');
-  };
-
-  window.loadTodayAttendance = function(){
-    refreshCurrentProfileFromStore();
-    if(!currentProfile) return;
-    var today=todayStr();
-    var rec=(getAttendance()||[]).find(function(a){ return sid(a.employee_id)===sid(currentProfile.id) && a.date===today && a.work_type==='Office'; });
-    document.getElementById('dash-ci').textContent=rec&&rec.check_in?fmtTime(rec.check_in):'—';
-    document.getElementById('dash-co').textContent=rec&&rec.check_out?fmtTime(rec.check_out):'—';
-    document.getElementById('dash-ci-status').textContent=rec?getStatusLabel(rec):'—';
-  };
-
-  window.loadStats = function(){
-    refreshCurrentProfileFromStore();
-    if(!currentProfile) return;
-    var now=new Date(); var y=now.getFullYear(), m=pad(now.getMonth()+1); var from=y+'-'+m+'-01';
-    var arr=(getAttendance()||[]).filter(function(a){ return sid(a.employee_id)===sid(currentProfile.id) && a.date>=from; });
-    document.getElementById('st-present').textContent=arr.filter(function(a){return a.check_in&&a.work_type==='Office';}).length;
-    document.getElementById('st-late').textContent=arr.filter(function(a){return a.work_type==='Office'&&isLate(a);}).length;
-    document.getElementById('st-wfh').textContent=arr.filter(function(a){return a.work_type==='WFH';}).length;
-    document.getElementById('st-ot').textContent=arr.filter(function(a){return (a.work_type||'').indexOf('OT')>-1;}).length;
-  };
-
-  window.loadAttendanceTab = function(){
-    refreshCurrentProfileFromStore();
-    if(!currentProfile) return;
-    var today=todayStr(); var att=getAttendance()||[];
-    var rec=att.find(function(a){return sid(a.employee_id)===sid(currentProfile.id)&&a.date===today&&a.work_type==='Office';});
-    var btnCI=document.getElementById('btn-ci'); var btnCO=document.getElementById('btn-co');
-    if(!btnCI || !btnCO) return;
-    if(!rec){
-      btnCI.className='btn-ci btn-green'; btnCI.textContent='🟢  CHECK IN — Office'; btnCI.onclick=function(){punch('in');}; btnCI.disabled=false;
-      btnCO.className='btn-ci btn-gray'; btnCO.textContent='🔴  Check In First'; btnCO.disabled=true; btnCO.onclick=null;
-    }else if(rec.check_in&&!rec.check_out){
-      btnCI.className='btn-ci btn-green-done'; btnCI.textContent='✅ Checked In — '+fmtTime(rec.check_in)+' (Office)'; btnCI.onclick=null;
-      var now=new Date(); var h=now.getHours(), min=now.getMinutes();
-      var isEarly=h<17||(h===17&&min<15);
-      btnCO.className=isEarly?'btn-ci btn-red-warn':'btn-ci btn-red';
-      btnCO.textContent=isEarly?'⚠️ CHECK OUT — Half Day will apply':'🔴  CHECK OUT';
-      btnCO.disabled=false; btnCO.onclick=function(){punch('out');};
-    }else{
-      btnCI.className='btn-ci btn-green-done'; btnCI.textContent='✅ In: '+fmtTime(rec.check_in); btnCI.onclick=null; btnCI.disabled=true;
-      btnCO.className='btn-ci btn-red-done'; btnCO.textContent='✅ Out: '+fmtTime(rec.check_out); btnCO.onclick=null; btnCO.disabled=true;
-    }
-    updateWFHWarn();
-  };
-
-  window.loadProfileTab = function(){
-    refreshCurrentProfileFromStore();
-    if(!currentProfile)return;
-    setAvatarEls(currentProfile);
-    document.getElementById('profile-name').textContent=currentProfile.name||'';
-    document.getElementById('profile-meta').textContent=(currentProfile.designation||'')+(currentProfile.department?' · '+currentProfile.department:'');
-    document.getElementById('profile-email').textContent=currentProfile.email||'';
-    document.getElementById('profile-status-emoji').textContent=currentProfile.status_emoji||'😊';
-    document.getElementById('profile-status-text').textContent=currentProfile.status_text||'Set your status.';
-  };
-
-  window.loadAdminStaff = function(){
-    if(!isAdmin())return;
-    var emps=getEmployees()||[];
-    var activeCount=emps.filter(function(e){return e.active!==false;}).length;
-    var now=new Date();
-    var monthLabel=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][now.getMonth()];
-    var html='';
-    html += '<button onclick="openAddStaff()" style="width:100%;background:linear-gradient(135deg,#10b981,#059669);color:#fff;border:none;border-radius:13px;padding:13px;font-size:13px;font-weight:800;margin-bottom:12px;cursor:pointer">✦ Add New Employee</button>';
-    html += '<div style="background:#fff;border-radius:14px;padding:14px;box-shadow:0 2px 8px rgba(0,0,0,.06)">';
-    html += '<div class="flex-bet" style="gap:8px;flex-wrap:wrap;margin-bottom:11px"><div style="font-weight:700;font-size:13px;color:#0f172a">All Employees ('+emps.length+') · Active: '+activeCount+'</div><div style="font-size:10px;color:#94a3b8">Stats: '+monthLabel+' '+now.getFullYear()+'</div></div>';
-    html += emps.map(function(e){
-      var isAdm=e.is_admin||e.role==='admin';
-      var isBlocked=!!e.blocked; var isInactive=e.active===false; var st=getEmpStats(e.id);
-      return '<div class="staff-card">'
-        +'<div class="staff-main">'
-          +'<div class="staff-left" data-eid="'+e.id+'" onclick="openStaffAttendance(this.dataset.eid)">'
-            +avatarHtml(e,46,15)
-            +'<div class="staff-info">'
-              +'<div class="staff-name">'+(e.name||'—')+'</div>'
-              +'<div class="staff-meta">EMP-'+(e.emp_id||e.id||'')+' · '+(e.designation||'—')+' · '+(e.department||'—')+'</div>'
-              +'<div class="staff-mail">'+(e.email||'—')+'</div>'
-              +'<div class="staff-chip-row">'
-                +'<span class="chip '+(isAdm?'cp':'cgr')+'">'+(isAdm?'Admin':'User')+'</span>'
-                +'<span class="chip '+(isInactive?'cr':isBlocked?'cy':'cg')+'">'+(isInactive?'Inactive':isBlocked?'Blocked':'Active')+'</span>'
-              +'</div>'
-            +'</div>'
-          +'</div>'
-          +'<div>'
-            +'<div class="staff-stats">'
-              +'<div class="staff-stat" style="background:#f0fdf4"><div class="staff-stat-num" style="color:#16a34a">'+st.present+'</div><div class="staff-stat-lbl" style="color:#16a34a">Present</div></div>'
-              +'<div class="staff-stat" style="background:#fef2f2"><div class="staff-stat-num" style="color:#dc2626">'+st.absent+'</div><div class="staff-stat-lbl" style="color:#dc2626">Absent</div></div>'
-              +'<div class="staff-stat" style="background:#fef9c3"><div class="staff-stat-num" style="color:#d97706">'+st.late+'</div><div class="staff-stat-lbl" style="color:#d97706">Late</div></div>'
-              +'<div class="staff-stat" style="background:#f5f3ff"><div class="staff-stat-num" style="color:#7c3aed">'+st.wfh+'</div><div class="staff-stat-lbl" style="color:#7c3aed">WFH</div></div>'
-            +'</div>'
-            +'<div class="staff-foot" style="text-align:right;margin-top:5px">Total ever: '+st.total+' days</div>'
-          +'</div>'
-        +'</div>'
-        +'<div class="staff-actions">'
-          +'<button class="btn-sm" style="background:#e0f2fe;color:#0369a1" data-eid="'+e.id+'" onclick="event.stopPropagation();openStaffAttendance(this.dataset.eid)">📋 Records</button>'
-          +'<button class="btn-sm" style="background:#ede9fe;color:#6d28d9" data-eid="'+e.id+'" onclick="event.stopPropagation();openEditStaff(this.dataset.eid)">✏️ Edit</button>'
-          +'<button class="btn-sm" style="background:#fef9c3;color:#854d0e" data-eid="'+e.id+'" onclick="event.stopPropagation();resetStaffPw(this.dataset.eid)">🔑 Password</button>'
-          +'<button class="btn-sm" style="background:#fef2f2;color:#991b1b" data-eid="'+e.id+'" data-blk="'+(isBlocked?'1':'0')+'" onclick="event.stopPropagation();toggleBlockBtn(this)">'+(isBlocked?'🔓 Unblock':'🔒 Block')+'</button>'
-          +'<button class="btn-sm" style="background:'+(isInactive?'#f0fdf4':'#fee2e2')+';color:'+(isInactive?'#16a34a':'#991b1b')+'" data-eid="'+e.id+'" data-act="'+(isInactive?'1':'0')+'" onclick="event.stopPropagation();toggleActiveBtn(this)">'+(isInactive?'✅ Activate':'⛔ Deactivate')+'</button>'
-        +'</div>'
-      +'</div>';
-    }).join('');
-    html += '</div>';
-    var target=document.getElementById('as-staff'); if(target) target.innerHTML=html;
-  };
-
-  function chainRefresh(fnName){
-    var original = window[fnName];
-    if(typeof original !== 'function') return;
-    window[fnName] = async function(){
-      var out = await original.apply(this, arguments);
-      try{ await Promise.allSettled([fetchEmployees(), fetchAttendance(), fetchLeaves()]); }catch(e){}
-      refreshCurrentProfileFromStore();
-      if(typeof loadDashboard==='function') loadDashboard();
-      if(typeof loadProfileTab==='function') loadProfileTab();
-      if(typeof loadAttendanceTab==='function') loadAttendanceTab();
-      return out;
-    };
-  }
-  ['saveStaff','toggleBlock','toggleActive','resetStaffPw','saveStaffRecord','deleteStaffRecord','saveFixAtt','clearAttRecord'].forEach(chainRefresh);
 })();
 </script>
 
