@@ -1124,11 +1124,12 @@ function loadStats(){
     byDate[k].push(a);
   });
 
-  var present=0, early=0, late=0, abs=0, wfhc=0;
+  var officePresent=0, early=0, late=0, abs=0, wfhc=0;
   Object.keys(byDate).forEach(function(date){
     var list=byDate[date].slice().sort(function(a,b){
-      if((a.work_type||'')==='Office' && (b.work_type||'')!=='Office') return -1;
-      if((b.work_type||'')==='Office' && (a.work_type||'')!=='Office') return 1;
+      var aw=(a.work_type||'').toUpperCase(), bw=(b.work_type||'').toUpperCase();
+      if(aw==='OFFICE' && bw!=='OFFICE') return -1;
+      if(bw==='OFFICE' && aw!=='OFFICE') return 1;
       if((a.status||'')==='Fixed' && (b.status||'')!=='Fixed') return -1;
       if((b.status||'')==='Fixed' && (a.status||'')!=='Fixed') return 1;
       return ((b.check_in||'')+'').localeCompare((a.check_in||'')+'');
@@ -1136,7 +1137,8 @@ function loadStats(){
     var r=list[0];
     if(!r) return;
     var wt=(r.work_type||'').toUpperCase();
-    if(r.status==='Absent'){
+
+    if((r.status||'')==='Absent'){
       abs++;
       return;
     }
@@ -1146,26 +1148,42 @@ function loadStats(){
     }
     if(isLate(r)) late++;
     else if(getAttLabel(r)==='Early') early++;
-    else present++;
+    else officePresent++;
   });
 
-  var workingDays=present+early+late+wfhc;
+  var presentCardCount=officePresent+early+wfhc;
+  var workingDays=presentCardCount+late;
+
   document.getElementById('dash-stats').innerHTML=
-    '<div class="stat-card" style="background:#f0fdf4;border-color:#bbf7d0;cursor:pointer" onclick="openMyRecords(\'present\')"><div style="font-size:9px;font-weight:700;color:#16a34a">✅ Present</div><div style="font-size:24px;font-weight:800;color:#15803d;margin-top:1px">'+(present+early)+'</div><div style="font-size:9px;color:#86efac">This month</div></div>'+
+    '<div class="stat-card" style="background:#f0fdf4;border-color:#bbf7d0;cursor:pointer" onclick="openMyRecords(\'present\')"><div style="font-size:9px;font-weight:700;color:#16a34a">✅ Present</div><div style="font-size:24px;font-weight:800;color:#15803d;margin-top:1px">'+presentCardCount+'</div><div style="font-size:9px;color:#86efac">This month</div></div>'+
     '<div class="stat-card" style="background:#fef9c3;border-color:#fef08a;cursor:pointer" onclick="openMyRecords(\'late\')"><div style="font-size:9px;font-weight:700;color:#854d0e">⏰ Late</div><div style="font-size:24px;font-weight:800;color:#a16207;margin-top:1px">'+late+'</div><div style="font-size:9px;color:#fde047">This month</div></div>'+
     '<div class="stat-card" style="background:#fef2f2;border-color:#fecaca;cursor:pointer" onclick="openMyRecords(\'absent\')"><div style="font-size:9px;font-weight:700;color:#991b1b">❌ Absent</div><div style="font-size:24px;font-weight:800;color:#dc2626;margin-top:1px">'+abs+'</div><div style="font-size:9px;color:#fca5a5">This month</div></div>'+
     '<div class="stat-card" style="background:#f5f3ff;border-color:#ddd6fe;cursor:pointer" onclick="openMyRecords(\'wfh\')"><div style="font-size:9px;font-weight:700;color:#6d28d9">🏠 WFH</div><div style="font-size:24px;font-weight:800;color:#7c3aed;margin-top:1px">'+wfhc+'</div><div style="font-size:9px;color:#c4b5fd">This month</div></div>';
-  if(late>=3){document.getElementById('late-warn').style.display='flex';document.getElementById('late-warn-txt').textContent='You have '+late+' late marks this month'+(late>=4?' — 1 day salary deducted!':'');}
-  else{document.getElementById('late-warn').style.display='none';}
+
+  if(document.getElementById('late-warn')){
+    if(late>=3){
+      document.getElementById('late-warn').style.display='flex';
+      document.getElementById('late-warn-txt').textContent='You have '+late+' late marks this month'+(late>=4?' — 1 day salary deducted!':'');
+    }else{
+      document.getElementById('late-warn').style.display='none';
+    }
+  }
+
   document.getElementById('dash-summary').innerHTML=
-    '<div class="summary-row"><span style="font-size:12px;color:#475569">Working Days (this month)</span><span style="font-weight:700">'+workingDays+'</span></div>'+
-    '<div class="summary-row"><span style="font-size:12px;color:#475569">Present / Early</span><span style="font-weight:700;color:#16a34a">'+(present+early)+'</span></div>'+
-    '<div class="summary-row"><span style="font-size:12px;color:#475569">Late</span><span style="font-weight:700;color:#d97706">'+late+'</span></div>'+
-    '<div class="summary-row"><span style="font-size:12px;color:#475569">Absent</span><span style="font-weight:700;color:#dc2626">'+abs+'</span></div>'+
-    '<div class="summary-row"><span style="font-size:12px;color:#475569">WFH Days</span><span style="font-weight:700;color:#7c3aed">'+wfhc+'</span></div>';
-  const rec=getAttendance().filter(function(a){return sidSafe(a.employee_id)===sidSafe(currentProfile.id);}).sort(function(a,b){
-    return (((b.date||'')+' '+(b.check_in||''))).localeCompare(((a.date||'')+' '+(a.check_in||'')));
+    '<div class="summary-row" style="cursor:pointer" onclick="openMyRecords(\'all\')" ><span style="font-size:12px;color:#475569">📅 Working Days (this month)</span><span style="font-weight:700;color:#3b82f6">'+workingDays+' →</span></div>'+
+    '<div class="summary-row" style="cursor:pointer" onclick="openMyRecords(\'present\')" ><span style="font-size:12px;color:#475569">✅ Present / Early</span><span style="font-weight:700;color:#16a34a">'+presentCardCount+' →</span></div>'+
+    '<div class="summary-row" style="cursor:pointer" onclick="openMyRecords(\'late\')"   ><span style="font-size:12px;color:#475569">⏰ Late</span><span style="font-weight:700;color:#d97706">'+late+' →</span></div>'+
+    '<div class="summary-row" style="cursor:pointer" onclick="openMyRecords(\'absent\')" ><span style="font-size:12px;color:#475569">❌ Absent</span><span style="font-weight:700;color:#dc2626">'+abs+' →</span></div>'+
+    '<div class="summary-row" style="cursor:pointer" onclick="openMyRecords(\'wfh\')"    ><span style="font-size:12px;color:#475569">🏠 WFH Days</span><span style="font-weight:700;color:#7c3aed">'+wfhc+' →</span></div>';
+
+  const rec=getAttendance().filter(function(a){
+    return sidSafe(a.employee_id)===sidSafe(currentProfile.id);
+  }).sort(function(a,b){
+    var ak=(b.date||'')+' '+((b.check_in||'')+'');
+    var bk=(a.date||'')+' '+((a.check_in||'')+'');
+    return ak.localeCompare(bk);
   }).slice(0,7);
+
   document.getElementById('dash-recent').innerHTML=rec.length?rec.map(function(r){
     return '<div class="att-row"><div><div style="font-size:12px;font-weight:700;color:#0f172a">'+fmtDate(r.date)+'</div><div style="font-size:10px;color:#94a3b8">'+(r.work_type||'Office')+'</div></div><div style="text-align:right"><div style="font-size:11px;color:#64748b">'+(r.check_in?fmtTime(r.check_in):'—')+' → '+(r.check_out?fmtTime(r.check_out):'—')+'</div><span class="chip '+statusClass(r)+'">'+getStatusLabel(r)+'</span></div></div>';
   }).join(''):'<div class="empty">No records yet</div>';
@@ -1189,7 +1207,7 @@ function openMyRecords(filterType){
     var wt=(r.work_type||'').toUpperCase();
     if(filterType==='present'){
       if(r.status==='Absent')return false;
-      if(wt==='WFH' || wt==='OT-WFH')return false;
+      if(wt==='WFH' || wt==='OT-WFH')return true;
       return !isLate(r);
     }
     if(filterType==='late') return r.status!=='Absent' && wt!=='WFH' && wt!=='OT-WFH' && isLate(r);
