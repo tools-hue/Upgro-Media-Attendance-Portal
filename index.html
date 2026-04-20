@@ -800,7 +800,7 @@ function getEmployees(){
   {id:'1019',emp_id:'1019',name:'Aditya Sharma',email:'aditya.googleads@upgromedia.com',password:'Aditya@1019',designation:'Google Ads Expert',department:'Marketing',role:'employee',is_admin:false,joining_date:'',date_of_birth:'',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
   {id:'1020',emp_id:'1020',name:'Ranveer Singh',email:'ranveer.copywriter@upgromedia.com',password:'Ranveer@1020',designation:'Copywriter',department:'Content',role:'employee',is_admin:false,joining_date:'',date_of_birth:'',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
   {id:'1021',emp_id:'1021',name:'Surya Pratap Singh',email:'surya.meta@upgromedia.com',password:'Surya@1021',designation:'Meta Media Buyer',department:'Marketing',role:'employee',is_admin:false,joining_date:'',date_of_birth:'',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
-  {id:'1022',emp_id:'1022',name:'Subhi Singh',email:'subhi.meta@upgromedia.com',password:'Subhi@1022',designation:'Meta Media Buyer',department:'Marketing',role:'employee',is_admin:false,joining_date:'',date_of_birth:'',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true}
+  {id:'1022',emp_id:'1022',name:'Subhi Singh',email:'subhi.meta@upgromedia.com',password:'Subhi@1022',designation:'Meta Media Buyer',department:'Marketing',role:'employee',is_admin:false,joining_date:'',date_of_birth:'',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
   {id:'1023',emp_id:'1023',name:'Ishika Saxena',email:'ishika.crm@upgromedia.com',password:'Ishika@123',designation:'CRM',department:'Marketing',role:'employee',is_admin:false,joining_date:'',date_of_birth:'',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true}
  ];
     setData('employees',emps);
@@ -2228,34 +2228,107 @@ function createStaffModal(title,emp){
   box.querySelector('#sm-save-btn').onclick=function(){saveStaff(empId);};
   return mo;
 }
-function saveStaff(id){
-  const err=document.getElementById('sm-err');err.style.display='none';
+async function saveStaff(id){
+  const err=document.getElementById('sm-err');
+  if(err) err.style.display='none';
+
   const name=document.getElementById('sm-name').value.trim();
   const email=document.getElementById('sm-email').value.trim();
-  if(!name||!email){err.textContent='Name and Email are required';err.style.display='block';return;}
+
+  if(!name||!email){
+    if(err){err.textContent='Name and Email are required';err.style.display='block';}
+    return;
+  }
+
   const emps=getEmployees();
+
   if(id){
-    const idx=emps.findIndex(function(e){return e.id===id;});
-    Object.assign(emps[idx],{name,email,designation:document.getElementById('sm-desig').value,department:document.getElementById('sm-dept').value,phone:document.getElementById('sm-phone').value,date_of_birth:document.getElementById('sm-dob').value,joining_date:document.getElementById('sm-joining').value,employment_type:document.getElementById('sm-etype').value});
-    saveEmployees(emps);pushEmployee(emps[idx]);if(currentProfile&&currentProfile.id===id)currentProfile=emps[idx];
+    const idx=emps.findIndex(function(e){return String(e.id)===String(id);});
+    if(idx<0){
+      if(err){err.textContent='Employee not found';err.style.display='block';}
+      return;
+    }
+
+    Object.assign(emps[idx],{
+      name:name,
+      email:email,
+      designation:document.getElementById('sm-desig').value,
+      department:document.getElementById('sm-dept').value,
+      phone:document.getElementById('sm-phone').value,
+      date_of_birth:document.getElementById('sm-dob').value,
+      joining_date:document.getElementById('sm-joining').value,
+      employment_type:document.getElementById('sm-etype').value
+    });
+
+    saveEmployees(emps);
+    try{await pushEmployee(emps[idx]);}catch(e){console.warn('pushEmployee update failed',e);}
+    if(currentProfile && String(currentProfile.id)===String(id)) currentProfile=emps[idx];
     toast('✅ Employee updated!');
   } else {
     const pw=document.getElementById('sm-pw').value;
-    if(!pw){err.textContent='Password is required';err.style.display='block';return;}
-    if(emps.find(function(e){return e.email.toLowerCase()===email.toLowerCase();})){err.textContent='Email already exists';err.style.display='block';return;}
-    const newId=String(Math.max.apply(null,emps.map(function(e){return parseInt(e.emp_id||1000);}))+1);
-    emps.push({id:newId,emp_id:newId,name,email,password:pw,designation:document.getElementById('sm-desig').value,department:document.getElementById('sm-dept').value,phone:document.getElementById('sm-phone').value,date_of_birth:document.getElementById('sm-dob').value,joining_date:document.getElementById('sm-joining').value,employment_type:document.getElementById('sm-etype').value,role:'employee',is_admin:false,status_emoji:'😊',status_text:'Available',avatar_url:'',active:true,blocked:false});
-    saveEmployees(emps);toast('✅ Employee added!');
+
+    if(!pw){
+      if(err){err.textContent='Password is required';err.style.display='block';}
+      return;
+    }
+
+    if(emps.find(function(e){return String(e.email||'').toLowerCase()===email.toLowerCase();})){
+      if(err){err.textContent='Email already exists';err.style.display='block';}
+      return;
+    }
+
+    const ids=emps.map(function(e){return parseInt(e.emp_id||e.id||1000,10);}).filter(function(n){return !isNaN(n);});
+    const newId=String((ids.length?Math.max.apply(null,ids):1000)+1);
+
+    const newEmp={
+      id:newId,
+      emp_id:newId,
+      name:name,
+      email:email,
+      password:pw,
+      designation:document.getElementById('sm-desig').value,
+      department:document.getElementById('sm-dept').value,
+      phone:document.getElementById('sm-phone').value,
+      date_of_birth:document.getElementById('sm-dob').value,
+      joining_date:document.getElementById('sm-joining').value,
+      employment_type:document.getElementById('sm-etype').value,
+      role:'employee',
+      is_admin:false,
+      status_emoji:'😊',
+      status_text:'Available',
+      avatar_url:'',
+      active:true,
+      blocked:false
+    };
+
+    emps.push(newEmp);
+    saveEmployees(emps);
+
+    try{
+      await pushEmployee(newEmp);
+      if(window.ensureEmployeeInSupabase) await window.ensureEmployeeInSupabase(newEmp.id);
+      toast('✅ Employee added!');
+    }catch(e){
+      console.warn('Employee create sync failed',e);
+      toast('⚠️ Employee added locally, but cloud sync failed');
+    }
   }
-  document.getElementById('staff-modal')?.remove();loadAdminStaff();
+
+  document.getElementById('staff-modal')?.remove();
+  loadAdminStaff();
 }
-function resetStaffPw(id){
-  const emp=getEmployees().find(function(e){return e.id===id;});
+async function resetStaffPw(id){
+  const emp=getEmployees().find(function(e){return String(e.id)===String(id);});
   if(!emp)return;
   const newPw=prompt('New password for '+emp.name+':');
   if(!newPw||newPw.length<6){if(newPw!==null)toast('Password must be at least 6 characters');return;}
-  const emps=getEmployees();const idx=emps.findIndex(function(e){return e.id===id;});
-  emps[idx].password=newPw;saveEmployees(emps);toast('✅ Password reset for '+emp.name);
+  const emps=getEmployees();
+  const idx=emps.findIndex(function(e){return String(e.id)===String(id);});
+  if(idx<0)return;
+  emps[idx].password=newPw;
+  saveEmployees(emps);
+  try{await pushEmployee(emps[idx]);}catch(e){console.warn('pushEmployee password reset failed',e);}
+  toast('✅ Password reset for '+emp.name);
 }
 
 function toggleBlockBtn(btn){toggleBlock(btn.dataset.eid,btn.dataset.blk==='1');}
