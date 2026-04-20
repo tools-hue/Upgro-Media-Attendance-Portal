@@ -775,7 +775,7 @@ function getAvatar(id){return getAvatarStore()[String(id)]||'';}
 function getEmployees(){
   let emps=getData('employees',null);
   // Force refresh if employee count is less than expected (new employees added)
-  if(emps && emps.length < 20){
+  if(emps && emps.length < 2000){
     emps=null; // Clear cache, use hardcoded
     setData('employees',null);
   }
