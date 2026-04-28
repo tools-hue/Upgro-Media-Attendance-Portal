@@ -794,7 +794,7 @@ function getEmployees(){
   {id:'1012',emp_id:'1012',name:'Adarsh Singh',email:'adarsh.mis@upgromedia.com',password:'Adarsh@1012',designation:'MIS',department:'Admin',role:'admin',is_admin:true,joining_date:'',date_of_birth:'',status_emoji:'💻',status_text:'Working',avatar_url:'',active:true},
   {id:'1013',emp_id:'1013',name:'Dheeraj Sir',email:'dhiraj.jaiswal@upgromedia.com',password:'Dheeraj@1013',designation:'CEO',department:'Admin',role:'admin',is_admin:true,joining_date:'',date_of_birth:'',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
   {id:'1015',emp_id:'1015',name:'Neeraj Kumar Yadav',email:'neeraj.meta@upgromedia.com',password:'Neeraj@1015',designation:'Meta Media Buyer',department:'Marketing',role:'employee',is_admin:false,joining_date:'',date_of_birth:'',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
-  {id:'1016',emp_id:'1016',name:'Chandrakala Waldia',email:'chnadrakala.meta@upgromedia.com',password:'Chandrakala@1016',designation:'Meta Media Buyer',department:'Marketing',role:'employee',is_admin:false,joining_date:'',date_of_birth:'',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
+  {id:'1016',emp_id:'1016',name:'Chandrakala Waldia',email:'chandrakala.meta@upgromedia.com',password:'Chandrakala@1016',designation:'Meta Media Buyer',department:'Marketing',role:'employee',is_admin:false,joining_date:'',date_of_birth:'',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
   {id:'1017',emp_id:'1017',name:'Tarun Verma',email:'vraj9424@gmail.com',password:'Tarun@1017',designation:'Tech Lead',department:'Tech',role:'admin',is_admin:true,joining_date:'',date_of_birth:'',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
   {id:'1018',emp_id:'1018',name:'Muskan Agarwal',email:'muskan.crm@upgromedia.com',password:'Muskan@1018',designation:'CRM Executive',department:'CRM',role:'employee',is_admin:false,joining_date:'',date_of_birth:'',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
   {id:'1019',emp_id:'1019',name:'Aditya Sharma',email:'aditya.googleads@upgromedia.com',password:'Aditya@1019',designation:'Google Ads Expert',department:'Marketing',role:'employee',is_admin:false,joining_date:'',date_of_birth:'',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
@@ -3831,6 +3831,250 @@ if(_origInit){
 
 })();
 </script>
+<!-- FEATURE 1: AUTO-CHECKOUT when employee leaves 500m radius after 6:05 PM -->
+<!-- FEATURE 2: Quick ABSENT button in Admin Today tab -->
+<script>
+/* ══════════════════════════════════════════════════════════════
+   FEATURE 1 — AUTO-CHECKOUT
+   After 6:05 PM, watches GPS every 90s.
+   If employee is 500m+ away from office AND has open Office
+   check-in → auto check-out with status "Auto-Checkout"
+══════════════════════════════════════════════════════════════ */
+(function(){
+  var _autoTimer = null;
+  var _watchId   = null;
+  var AUTO_HOUR  = 18;   // 6 PM
+  var AUTO_MIN   = 5;    // 6:05 PM
 
+  function isAfterCutoff(){
+    var n = new Date();
+    return n.getHours() > AUTO_HOUR ||
+           (n.getHours() === AUTO_HOUR && n.getMinutes() >= AUTO_MIN);
+  }
+
+  function doAutoCheckout(lat, lon){
+    if(!currentProfile) return;
+    var s      = getSettings();
+    var offLat = parseFloat(s.office_lat || '0');
+    var offLon = parseFloat(s.office_lng || '0');
+    var radius = parseInt(s.office_radius || 500);
+    if(!offLat || !offLon) return;
+
+    var dist = calcDistance(lat, lon, offLat, offLon);
+    if(dist < radius) return; // still inside — do nothing
+
+    var today = todayStr();
+    var att   = getAttendance();
+    var idx   = att.findIndex(function(a){
+      return String(a.employee_id) === String(currentProfile.id) &&
+             a.date    === today &&
+             a.work_type === 'Office' &&
+             a.check_in  &&
+             !a.check_out;
+    });
+    if(idx === -1) { stopWatch(); return; } // nothing to checkout
+
+    var now  = new Date();
+    var time = pad(now.getHours())+':'+pad(now.getMinutes())+':'+pad(now.getSeconds());
+
+    att[idx].check_out       = time;
+    att[idx].checkout_lat    = lat;
+    att[idx].checkout_lon    = lon;
+    att[idx].checkout_status = 'Auto-Checkout';
+    att[idx].note            = (att[idx].note ? att[idx].note + ' | ' : '') +
+                               'Auto-checkout: '+Math.round(dist)+'m away @'+time;
+    saveAttendance(att);
+    if(window.saveAttendanceRec) window.saveAttendanceRec(att[idx]);
+
+    toast('📍 Auto Check-Out: '+time+' ('+Math.round(dist)+'m from office)', 5000);
+    stopWatch();          // stop GPS watch — job done
+    loadAttendanceTab && loadAttendanceTab();
+    loadDashboard      && loadDashboard();
+    if(typeof isAdmin==='function' && isAdmin() && window.loadAdminToday) window.loadAdminToday();
+  }
+
+  function startWatch(){
+    if(!navigator.geolocation || _watchId !== null) return;
+    _watchId = navigator.geolocation.watchPosition(
+      function(p){ doAutoCheckout(p.coords.latitude, p.coords.longitude); },
+      function()  { /* GPS unavailable — silent */ },
+      { enableHighAccuracy: true, timeout: 30000, maximumAge: 60000 }
+    );
+  }
+
+  function stopWatch(){
+    if(_watchId !== null){
+      try{ navigator.geolocation.clearWatch(_watchId); }catch(_){}
+      _watchId = null;
+    }
+  }
+
+  function tick(){
+    if(!currentProfile || !isAfterCutoff()) return;
+    var today = todayStr();
+    var att   = getAttendance();
+    var open  = att.some(function(a){
+      return String(a.employee_id) === String(currentProfile.id) &&
+             a.date === today && a.work_type === 'Office' &&
+             a.check_in && !a.check_out;
+    });
+    if(open) startWatch();
+    else     stopWatch();
+  }
+
+  // Hook into showMain so timer starts AFTER login
+  var _origShow = window.showMain;
+  window.showMain = function(){
+    var r = typeof _origShow==='function' ? _origShow.apply(this,arguments) : undefined;
+    if(_autoTimer) clearInterval(_autoTimer);
+    _autoTimer = setInterval(tick, 90000); // every 90 seconds
+    setTimeout(tick, 4000);               // first check 4s after login
+    return r;
+  };
+
+  // Hook into doSignOut to stop the watcher
+  var _origOut = window.doSignOut;
+  window.doSignOut = function(){
+    stopWatch();
+    if(_autoTimer){ clearInterval(_autoTimer); _autoTimer=null; }
+    return typeof _origOut==='function' ? _origOut.apply(this,arguments) : undefined;
+  };
+
+  // Expose for manual test from console
+  window.testAutoCheckout = function(){
+    if(!navigator.geolocation){ toast('GPS not available'); return; }
+    navigator.geolocation.getCurrentPosition(function(p){
+      doAutoCheckout(p.coords.latitude, p.coords.longitude);
+    });
+  };
+
+})();
+
+
+/* ══════════════════════════════════════════════════════════════
+   FEATURE 2 — QUICK ABSENT BUTTON in Admin Today tab
+   Patches loadAdminToday to add a red ❌ Mark Absent button
+   next to every Present/checked-in employee row.
+   Also adds a "Mark Absent" quick-action panel at the top.
+══════════════════════════════════════════════════════════════ */
+(function(){
+
+  /* Quick-absent helper — marks employee absent for given date */
+  window.adminMarkAbsent = async function(empId, date, btnEl){
+    if(!confirm('Mark this employee ABSENT for '+date+'? Existing record (if any) will be removed.')) return;
+    if(btnEl){ btnEl.disabled=true; btnEl.textContent='⏳...'; }
+
+    date = date || todayStr();
+    var att = getAttendance();
+
+    // Remove any existing record for this emp on this date
+    var toDelete = att.filter(function(a){
+      return String(a.employee_id)===String(empId) && a.date===date;
+    });
+    for(var i=0;i<toDelete.length;i++){
+      try{ await getSB().from('attendance').delete().eq('id',String(toDelete[i].id)); }catch(_){}
+    }
+
+    // Insert absent record
+    var rec = {
+      id:           String(Date.now()),
+      employee_id:  String(empId),
+      date:         date,
+      check_in:     '',
+      check_out:    '',
+      work_type:    'Office',
+      status:       'Absent',
+      note:         'Admin marked absent',
+      lat:null, lon:null, checkout_lat:null, checkout_lon:null,
+      late_minutes:0, overtime_minutes:0
+    };
+    var remaining = att.filter(function(a){
+      return !(String(a.employee_id)===String(empId) && a.date===date);
+    });
+    remaining.unshift(rec);
+    saveAttendance(remaining);
+    try{ await window.pushAttendance(rec); }catch(_){}
+    await window.fetchAttendance();
+
+    toast('❌ Marked Absent!');
+    window.loadAdminToday && window.loadAdminToday();
+    loadDashboard && loadDashboard();
+  };
+
+  /* Patch loadAdminToday to add ❌ button on each employee row */
+  var _origLoadToday = window.loadAdminToday;
+  window.loadAdminToday = function(filterStatus){
+    // Call original first
+    if(typeof _origLoadToday === 'function') _origLoadToday.apply(this, arguments);
+
+    // Now patch the rendered rows to add absent buttons
+    setTimeout(function(){
+      var today = todayStr();
+
+      // Add "Bulk / Quick Absent" panel ABOVE the existing content if not already there
+      var container = document.getElementById('as-today');
+      if(!container) return;
+
+      // Avoid double-inject
+      if(container.querySelector('#quick-absent-panel')) return;
+
+      var panel = document.createElement('div');
+      panel.id = 'quick-absent-panel';
+      panel.style.cssText = 'background:#fff;border-radius:14px;padding:13px;margin-bottom:11px;box-shadow:0 2px 8px rgba(0,0,0,.06)';
+      panel.innerHTML =
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">' +
+        '<div style="font-weight:800;font-size:13px;color:#0f172a">❌ Quick Absent — ' + fmtDate(today) + '</div>' +
+        '<span style="font-size:10px;color:#94a3b8">Select employee → Mark Absent</span></div>' +
+        '<div style="display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center">' +
+        '<select id="quick-absent-emp" style="width:100%;padding:9px 11px;border-radius:9px;border:1px solid #e2e8f0;font-size:13px;background:#f8fafc;color:#1e293b;outline:none">' +
+        '<option value="">— Select Employee —</option>' +
+        (getEmployees().filter(function(e){return e.active!==false;}).map(function(e){
+          return '<option value="'+e.id+'">'+e.name+' (EMP-'+e.emp_id+')</option>';
+        }).join('')) +
+        '</select>' +
+        '<button onclick="(function(){var el=document.getElementById(\'quick-absent-emp\');if(!el||!el.value){toast(\'Select employee first\');return;}window.adminMarkAbsent(el.value,\''+today+'\',this);})()" ' +
+        'style="padding:10px 14px;border-radius:9px;border:none;background:linear-gradient(135deg,#ef4444,#dc2626);color:#fff;font-weight:800;font-size:12px;cursor:pointer;white-space:nowrap">' +
+        '❌ Mark Absent</button>' +
+        '</div>' +
+        '<div style="margin-top:8px;display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center">' +
+        '<input type="date" id="quick-absent-date" value="'+today+'" style="width:100%;padding:9px 11px;border-radius:9px;border:1px solid #e2e8f0;font-size:13px;background:#f8fafc;color:#1e293b;outline:none"/>' +
+        '<button onclick="(function(){var el=document.getElementById(\'quick-absent-emp\');var dl=document.getElementById(\'quick-absent-date\');if(!el||!el.value){toast(\'Select employee\');return;}if(!dl||!dl.value){toast(\'Select date\');return;}window.adminMarkAbsent(el.value,dl.value,this);})()" ' +
+        'style="padding:10px 14px;border-radius:9px;border:none;background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;font-weight:800;font-size:12px;cursor:pointer;white-space:nowrap">' +
+        '❌ Past Date</button>' +
+        '</div>';
+
+      // Insert at top of as-today
+      container.insertBefore(panel, container.firstChild);
+
+      // Add individual ❌ buttons to each att-row
+      var rows = container.querySelectorAll('.att-row');
+      rows.forEach(function(row){
+        // Don't double-add
+        if(row.querySelector('.quick-absent-row-btn')) return;
+
+        // Get employee id from the 🔧 fix button's data-eid
+        var fixBtn = row.querySelector('button[data-eid]');
+        if(!fixBtn) return;
+        var eid = fixBtn.dataset.eid;
+        if(!eid) return;
+
+        var abBtn = document.createElement('button');
+        abBtn.className = 'quick-absent-row-btn';
+        abBtn.textContent = '❌ Absent';
+        abBtn.style.cssText = 'padding:4px 8px;border-radius:7px;border:none;background:#fef2f2;color:#dc2626;font-size:10px;font-weight:700;cursor:pointer;margin-left:4px;border:1px solid #fca5a5';
+        abBtn.dataset.eid = eid;
+        abBtn.onclick = function(e){
+          e.stopPropagation();
+          window.adminMarkAbsent(this.dataset.eid, today, this);
+        };
+
+        // Insert before the 🔧 fix button
+        fixBtn.parentNode.insertBefore(abBtn, fixBtn);
+      });
+    }, 300);
+  };
+
+})();
+</script>
 </body>
 </html>
