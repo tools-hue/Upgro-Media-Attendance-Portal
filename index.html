@@ -4294,7 +4294,7 @@ if(_origInit){
 
 <script>
 /* UGM PATCH 3 — Full roster-based export
-   Fix: Absent and Leave rows now appear in exports. Every active employee gets one row per date.
+   Fix: Absent and Leave rows now appear in exports. Every active employee gets one row per working date. Sundays are excluded.
 */
 (function(){
   'use strict';
@@ -4309,6 +4309,7 @@ if(_origInit){
     return new Date(p[0],p[1]-1,day);
   }
   function dayName(dateStr){var d=parseYMD(dateStr,true);return d?['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][d.getDay()]:'';}
+  function isSundayDate(dateStr){var d=parseYMD(dateStr,true);return !!(d && d.getDay()===0);}
   function eachDate(from,to){
     var s=parseYMD(from,true), e=parseYMD(to,true), arr=[];
     if(!s||!e) return arr;
@@ -4365,6 +4366,7 @@ if(_origInit){
     att.forEach(function(a){var k=attKey(a.employee_id,a.date);attMap[k]=pickBestRecord(attMap[k],a);});
     var dates=eachDate(from,to), rows=[];
     dates.forEach(function(date){
+      if(isSundayDate(date)) return;
       emps.forEach(function(emp){
         var a=attMap[attKey(emp.id,date)];
         var leave=approvedOrPendingLeave(emp.id,date);
@@ -4423,7 +4425,7 @@ if(_origInit){
       var now=new Date(), ymStr=now.getFullYear()+'-'+pad2(now.getMonth()+1);
       var extra=''
         +'<div id="ugm-full-month-export-card" class="exp-card" style="border:2px solid #16a34a">'
-        +'<div class="flex-row" style="gap:10px;margin-bottom:8px"><div class="exp-ic" style="background:#16a34a22">📊</div><div><div style="font-weight:800;font-size:13px;color:#0f172a">Complete Monthly Attendance</div><div style="font-size:11px;color:#64748b">Every active employee × every date · Present, Late, WFH, Leave, Absent, Holiday</div></div></div>'
+        +'<div class="flex-row" style="gap:10px;margin-bottom:8px"><div class="exp-ic" style="background:#16a34a22">📊</div><div><div style="font-weight:800;font-size:13px;color:#0f172a">Complete Monthly Attendance (No Sundays)</div><div style="font-size:11px;color:#64748b">Every active employee × working dates · Sundays excluded · Present, Late, WFH, Leave, Absent, Holiday</div></div></div>'
         +'<button class="btn-dl" style="background:linear-gradient(135deg,#16a34a,#15803d)" onclick="exportThisMonthFull()">⬇️ Download Full Month Data ('+ymStr+')</button>'
         +'<button class="btn-dl" style="background:linear-gradient(135deg,#ef4444,#dc2626);margin-top:7px" onclick="exportLeaveAbsentCSV()">⬇️ Download Only Absent + Leave ('+ymStr+')</button>'
         +'</div>';
