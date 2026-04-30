@@ -4181,5 +4181,265 @@ if(_origInit){
 })();
 </script>
 
+<script>
+/* UGM PATCH 2 — Admin Today filter state fix
+   Fix: Admin Today counter/card filter no longer jumps back to Present/All after click or refresh.
+*/
+(function(){
+  var ADMIN_TODAY_FILTER_KEY='ugm_admin_today_filter';
+
+  function ugmSid(v){return String(v==null?'':v);}
+  function ugmIsWFHType(wt){return wt==='WFH'||wt==='OT-WFH';}
+  function ugmGetTodayFilter(filterStatus){
+    if(filterStatus){
+      try{sessionStorage.setItem(ADMIN_TODAY_FILTER_KEY,filterStatus);}catch(e){}
+      return filterStatus;
+    }
+    try{return sessionStorage.getItem(ADMIN_TODAY_FILTER_KEY)||'all';}catch(e){return 'all';}
+  }
+  function ugmSetTodayFilter(filterStatus){
+    filterStatus=filterStatus||'all';
+    try{sessionStorage.setItem(ADMIN_TODAY_FILTER_KEY,filterStatus);}catch(e){}
+    window.loadAdminToday(filterStatus);
+  }
+  window.filterAdminToday=ugmSetTodayFilter;
+
+  function ugmClassifyTodayRecord(a){
+    if(!a || !a.check_in) return {status:'absent',label:'— Absent',chip:'cr'};
+    if(a.status==='Absent') return {status:'absent',label:'— Absent',chip:'cr'};
+    var wt=a.work_type||'Office';
+    if(ugmIsWFHType(wt)) return {status:'wfh',label:(wt==='OT-WFH'?'OT-WFH':'WFH'),chip:'cp'};
+    var lbl=(typeof getAttLabel==='function')?getAttLabel(a):(a.status||'Present');
+    if(lbl==='Early') return {status:'early',label:'Early',chip:'cbl'};
+    if(lbl==='Short Leave AM') return {status:'shortam',label:'Short AM',chip:'co'};
+    if(lbl==='Late' || (typeof isLate==='function'&&isLate(a))) return {status:'late',label:'Late',chip:'cy'};
+    return {status:'present',label:(lbl==='On Time'?'On Time':'Present'),chip:'cg'};
+  }
+
+  window.loadAdminToday=function(filterStatus){
+    if(typeof isAdmin==='function' && !isAdmin()) return;
+    var selected=ugmGetTodayFilter(filterStatus);
+    var today=(typeof todayStr==='function')?todayStr():new Date().toISOString().slice(0,10);
+    var emps=(typeof getEmployees==='function'?getEmployees():[]).filter(function(e){return e.active!==false;});
+    var att=(typeof getAttendance==='function'?getAttendance():[]).filter(function(a){return a.date===today;});
+    var attMap={};
+    att.forEach(function(a){
+      var k=ugmSid(a.employee_id);
+      if(!attMap[k] || a.work_type==='Office') attMap[k]=a;
+    });
+
+    var counts={all:emps.length,present:0,early:0,late:0,absent:0,shortam:0,wfh:0};
+    var rows=[];
+    emps.forEach(function(e){
+      var a=attMap[ugmSid(e.id)];
+      var c=ugmClassifyTodayRecord(a);
+      counts[c.status]=(counts[c.status]||0)+1;
+      if(selected && selected!=='all' && selected!==c.status) return;
+      var av=(typeof avatarHtml==='function')?avatarHtml(e,36,12):'';
+      var line2=a
+        ? 'IN: '+(a.check_in&&typeof fmtTime==='function'?fmtTime(a.check_in):(a.check_in||'—'))+' OUT: '+(a.check_out&&typeof fmtTime==='function'?fmtTime(a.check_out):(a.check_out||'—'))+' ('+(a.work_type||'Office')+')'+(a.checkout_status?' · '+a.checkout_status:'')
+        : 'EMP-'+(e.emp_id||'');
+      rows.push('<div class="att-row">'+av+
+        '<div style="flex:1;margin-left:9px"><div style="font-size:12px;font-weight:700">'+(e.name||'')+'</div>'+ 
+        '<div style="font-size:10px;color:#94a3b8">'+line2+'</div></div>'+ 
+        '<span class="chip '+c.chip+'" style="cursor:pointer" data-f="'+c.status+'" onclick="window.filterAdminToday(this.dataset.f)">'+c.label+'</span>'+ 
+        '<button style="padding:4px 8px;border-radius:7px;border:none;background:#ede9fe;color:#6d28d9;font-size:10px;font-weight:700;cursor:pointer;margin-left:5px" data-eid="'+ugmSid(e.id)+'" data-dt="'+today+'" onclick="if(typeof quickFix===\'function\')quickFix(this.dataset.eid,this.dataset.dt)">🔧</button></div>');
+    });
+
+    var totalPresent=counts.present+counts.early;
+    function card(f,label,num,color,bg){
+      var on=selected===f;
+      return '<div data-f="'+f+'" onclick="window.filterAdminToday(this.dataset.f)" style="background:'+(bg||'#fff')+';border-radius:12px;padding:11px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.06);cursor:pointer;border:'+(on?'2px solid #0f172a':'1px solid transparent')+'">'
+        +'<div style="font-size:24px;font-weight:800;color:'+color+'">'+num+'</div><div style="font-size:9px;color:#64748b;margin-top:1px">'+label+'</div></div>';
+    }
+    var clearBtn=(selected&&selected!=='all')
+      ? '<button data-f="all" onclick="window.filterAdminToday(this.dataset.f)" style="font-size:10px;padding:4px 10px;border-radius:7px;border:1px solid #e11d48;background:#fef2f2;color:#e11d48;cursor:pointer;font-weight:800">✕ Clear '+selected.toUpperCase()+'</button>'
+      : '<span style="font-size:10px;color:#94a3b8">Tap counters to filter</span>';
+    var el=document.getElementById('as-today');
+    if(!el) return;
+    el.innerHTML=
+      '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:8px">'
+      +card('present','✅ Present',totalPresent,'#10b981','#fff')
+      +card('absent','❌ Absent',counts.absent,'#ef4444','#fff')
+      +card('late','⏰ Late',counts.late,'#f59e0b','#fff')
+      +card('wfh','🏠 WFH',counts.wfh,'#7c3aed','#fff')
+      +'</div>'
+      +'<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:11px">'
+      +card('early','🏢 Early',counts.early,'#0369a1','#fff').replace('padding:11px;text-align:center;','padding:7px 10px;text-align:center;min-width:70px;')
+      +card('shortam','📋 Short AM',counts.shortam,'#c2410c','#fff').replace('padding:11px;text-align:center;','padding:7px 10px;text-align:center;min-width:80px;')
+      +'<div style="margin-left:auto">'+clearBtn+'</div></div>'
+      +'<div style="background:#fff;border-radius:14px;padding:14px;box-shadow:0 2px 8px rgba(0,0,0,.06)">'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">'
+      +'<div style="font-weight:700;font-size:13px;color:#0f172a">'+(typeof fmtDate==='function'?fmtDate(today):today)+' · '+emps.length+' staff</div>'
+      +'<span style="font-size:10px;font-weight:800;color:#0f172a">Showing: '+(selected==='all'?'All':selected.toUpperCase())+'</span></div>'
+      +(rows.length?rows.join(''):'<div class="empty">No employees match this filter</div>')
+      +'</div>';
+  };
+
+  var oldSwitchATab=window.switchATab;
+  window.switchATab=function(t,btn){
+    if(t==='today'){
+      ['today','records','ot','leaves','staff','export','settings','mark'].forEach(function(id){var el=document.getElementById('as-'+id);if(el)el.style.display=id===t?'block':'none';});
+      document.querySelectorAll('.atab').forEach(function(b){b.classList.remove('on');});
+      try{sessionStorage.setItem('ugm_admintab',t);}catch(e){}
+      if(btn)btn.classList.add('on');
+      window.loadAdminToday();
+      return;
+    }
+    return oldSwitchATab?oldSwitchATab.apply(this,arguments):undefined;
+  };
+})();
+</script>
+
+
+<script>
+/* UGM PATCH 3 — Full roster-based export
+   Fix: Absent and Leave rows now appear in exports. Every active employee gets one row per date.
+*/
+(function(){
+  'use strict';
+  function sid(v){return String(v==null?'':v);}
+  function pad2(n){return String(n).padStart(2,'0');}
+  function ymd(d){return d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate());}
+  function parseYMD(s, clampDay){
+    var p=String(s||'').split('-').map(Number);
+    if(p.length<3 || !p[0] || !p[1]) return null;
+    var maxDay=new Date(p[0],p[1],0).getDate();
+    var day=clampDay?Math.min(Math.max(p[2]||1,1),maxDay):(p[2]||1);
+    return new Date(p[0],p[1]-1,day);
+  }
+  function dayName(dateStr){var d=parseYMD(dateStr,true);return d?['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][d.getDay()]:'';}
+  function eachDate(from,to){
+    var s=parseYMD(from,true), e=parseYMD(to,true), arr=[];
+    if(!s||!e) return arr;
+    s.setHours(0,0,0,0); e.setHours(0,0,0,0);
+    for(var d=new Date(s); d<=e; d.setDate(d.getDate()+1)) arr.push(ymd(d));
+    return arr;
+  }
+  function isSameOrBetween(date, from, to){return date>=from && date<=to;}
+  function approvedOrPendingLeave(empId,date){
+    var leaves=(typeof getLeaves==='function'?getLeaves():[]);
+    var match=leaves.filter(function(l){
+      var st=String(l.status||'Pending');
+      if(st==='Rejected') return false;
+      return sid(l.employee_id)===sid(empId) && isSameOrBetween(date,l.from_date||'',l.to_date||l.from_date||'');
+    });
+    if(!match.length) return null;
+    match.sort(function(a,b){var aw=(a.status==='Approved'?2:1), bw=(b.status==='Approved'?2:1); return bw-aw;});
+    return match[0];
+  }
+  function holidayFor(date){
+    var map={'2026-01-01':"New Year's Day",'2026-01-26':'Republic Day','2026-03-03':'Holi','2026-04-14':'Dr. Ambedkar Jayanti','2026-05-01':'Labour Day','2026-08-15':'Independence Day','2026-08-22':'Raksha Bandhan','2026-08-29':'Janmashtami','2026-10-02':'Gandhi Jayanti','2026-10-21':'Dussehra','2026-11-10':'Diwali','2026-11-11':'Diwali Holiday','2026-12-25':'Christmas Day'};
+    return map[date]||'';
+  }
+  function attKey(empId,date){return sid(empId)+'__'+date;}
+  function pickBestRecord(existing,next){
+    if(!existing) return next;
+    if(existing.work_type==='Office') return existing;
+    if(next.work_type==='Office') return next;
+    if(existing.check_in && !next.check_in) return existing;
+    if(next.check_in && !existing.check_in) return next;
+    return existing;
+  }
+  function attLabel(a){
+    if(!a || !a.check_in) return '';
+    if(a.status==='Absent') return 'Absent';
+    if(a.status==='Fixed') return 'Fixed';
+    if(a.work_type==='WFH') return 'WFH';
+    if(a.work_type==='OT-WFH') return 'OT-WFH';
+    if(a.work_type==='OT-Office') return 'OT-Office';
+    try{if(typeof getAttLabel==='function') return getAttLabel(a);}catch(e){}
+    return a.status||'Present';
+  }
+  function calcHours(a){
+    if(!a || !a.check_in || !a.check_out) return '';
+    var ci=a.check_in.split(':').map(Number), co=a.check_out.split(':').map(Number);
+    if(ci.length<2||co.length<2||isNaN(ci[0])||isNaN(co[0])) return '';
+    return Math.round(((co[0]*60+co[1])-(ci[0]*60+ci[1]))/60*100)/100;
+  }
+  function calcOTHours(a){if(!a || !String(a.work_type||'').includes('OT')) return ''; return calcHours(a);}
+  function buildRosterRows(from,to){
+    var emps=(typeof getEmployees==='function'?getEmployees():[]).filter(function(e){return e && e.active!==false;});
+    var att=(typeof getAttendance==='function'?getAttendance():[]).filter(function(a){return a && a.date>=from && a.date<=to;});
+    var attMap={};
+    att.forEach(function(a){var k=attKey(a.employee_id,a.date);attMap[k]=pickBestRecord(attMap[k],a);});
+    var dates=eachDate(from,to), rows=[];
+    dates.forEach(function(date){
+      emps.forEach(function(emp){
+        var a=attMap[attKey(emp.id,date)];
+        var leave=approvedOrPendingLeave(emp.id,date);
+        var holiday=holidayFor(date);
+        var finalStatus='', ruleStatus='', leaveType='', leaveStatus='', note='';
+        if(a && a.check_in){
+          ruleStatus=attLabel(a);
+          finalStatus=(a.work_type==='WFH'||a.work_type==='OT-WFH')?'WFH / Present':'Present';
+          if(ruleStatus==='Late') finalStatus='Late';
+          if(ruleStatus==='Short Leave AM') finalStatus='Short Leave AM';
+          if(ruleStatus==='Early'||ruleStatus==='On Time') finalStatus='Present';
+          if(a.checkout_status==='Short Leave PM') finalStatus='Short Leave PM';
+          if(a.checkout_status==='Half Day') finalStatus='Half Day';
+          if(String(a.work_type||'').includes('OT')) finalStatus=(finalStatus==='Present'?'Present + OT':finalStatus+' + OT');
+          note=a.note||'';
+        }else if(leave){
+          finalStatus=leave.status==='Approved'?'Leave':'Leave Pending';
+          ruleStatus='No attendance';
+          leaveType=leave.type||'Leave';
+          leaveStatus=leave.status||'Pending';
+          note=leave.reason||'';
+        }else if(holiday){
+          finalStatus='Holiday';
+          ruleStatus=holiday;
+          note=holiday;
+        }else{
+          finalStatus='Absent';
+          ruleStatus='No check-in';
+        }
+        rows.push([date,dayName(date),emp.emp_id||'',emp.name||'',emp.designation||'',emp.department||'',finalStatus,a?(a.work_type||'Office'):'',a?(a.check_in||''):'',a?(a.check_out||''):'',ruleStatus,a?(a.checkout_status||''):'',leaveType,leaveStatus,calcHours(a),calcOTHours(a),a?(a.late_minutes||''):'',a?(a.overtime_minutes||''):'',note]);
+      });
+    });
+    return rows;
+  }
+  function rosterHeader(){return ['Date','Day','Emp ID','Employee','Designation','Department','Final Status','Work Type','Check In','Check Out','Check-in Rule','Checkout Rule','Leave Type','Leave Status','Total Hours','OT Hours','Late Minutes','Overtime Minutes','Note'];}
+  function downloadRoster(from,to,name){var rows=buildRosterRows(from,to);if(typeof dlCSV==='function') dlCSV([rosterHeader()].concat(rows),'complete_attendance_'+name+'.csv');}
+  window.exportFullAttendanceRoster=downloadRoster;
+  window.exportCSVRange=function(from,to,name){downloadRoster(from,to,name||'Range');};
+  window.exportLeaveAbsentCSV=function(){
+    var now=new Date(), ymStr=now.getFullYear()+'-'+pad2(now.getMonth()+1);
+    var from=ymStr+'-01', to=ymStr+'-'+new Date(now.getFullYear(),now.getMonth()+1,0).getDate();
+    var rows=buildRosterRows(from,to).filter(function(r){return r[6]==='Absent'||r[6]==='Leave'||r[6]==='Leave Pending';});
+    if(typeof dlCSV==='function') dlCSV([rosterHeader()].concat(rows),'absent_leave_'+ymStr+'.csv');
+  };
+  window.exportThisMonthFull=function(){
+    var now=new Date(), ymStr=now.getFullYear()+'-'+pad2(now.getMonth()+1);
+    var last=new Date(now.getFullYear(),now.getMonth()+1,0).getDate();
+    downloadRoster(ymStr+'-01',ymStr+'-'+last,'month_'+ymStr);
+  };
+  var oldRenderExport=window.renderExport;
+  window.renderExport=function(){
+    if(oldRenderExport) oldRenderExport.apply(this,arguments);
+    setTimeout(function(){
+      var el=document.getElementById('as-export');
+      if(!el || document.getElementById('ugm-full-month-export-card')) return;
+      var now=new Date(), ymStr=now.getFullYear()+'-'+pad2(now.getMonth()+1);
+      var extra=''
+        +'<div id="ugm-full-month-export-card" class="exp-card" style="border:2px solid #16a34a">'
+        +'<div class="flex-row" style="gap:10px;margin-bottom:8px"><div class="exp-ic" style="background:#16a34a22">📊</div><div><div style="font-weight:800;font-size:13px;color:#0f172a">Complete Monthly Attendance</div><div style="font-size:11px;color:#64748b">Every active employee × every date · Present, Late, WFH, Leave, Absent, Holiday</div></div></div>'
+        +'<button class="btn-dl" style="background:linear-gradient(135deg,#16a34a,#15803d)" onclick="exportThisMonthFull()">⬇️ Download Full Month Data ('+ymStr+')</button>'
+        +'<button class="btn-dl" style="background:linear-gradient(135deg,#ef4444,#dc2626);margin-top:7px" onclick="exportLeaveAbsentCSV()">⬇️ Download Only Absent + Leave ('+ymStr+')</button>'
+        +'</div>';
+      el.insertAdjacentHTML('afterbegin',extra);
+    },80);
+  };
+  window.exportYearMonth=function(){
+    var yr=parseInt((document.getElementById('exp-year')||{}).value)||new Date().getFullYear();
+    var mo=parseInt((document.getElementById('exp-month')||{}).value)||0;
+    var from,to,name;
+    if(mo>0){var last=new Date(yr,mo,0).getDate();from=yr+'-'+pad2(mo)+'-01';to=yr+'-'+pad2(mo)+'-'+last;name='Year_'+yr+'_Month_'+pad2(mo);}
+    else{from=yr+'-01-01';to=yr+'-12-31';name='Year_'+yr;}
+    downloadRoster(from,to,name);
+  };
+})();
+</script>
+
 </body>
 </html>
