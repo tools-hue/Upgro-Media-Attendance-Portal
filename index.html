@@ -4076,5 +4076,110 @@ if(_origInit){
 
 })();
 </script>
+
+<!-- UPGRO FINAL PATCH: Admin blink fix + geofence auto logout + Day in exports -->
+<script>
+(function(){
+  'use strict';
+  function safeClearTimer(name){try{if(window[name]){clearInterval(window[name]);window[name]=null;}}catch(e){}}
+  window.startUserAutoRefresh=function(){
+    safeClearTimer('_userRefreshTimer');
+    window._userRefreshTimer=setInterval(function(){
+      if(!window.currentProfile){safeClearTimer('_userRefreshTimer');return;}
+      var activeLabel=document.querySelector('.nav-btn .nav-lbl.on');
+      var activeText=activeLabel?activeLabel.textContent.trim().toLowerCase():'home';
+      Promise.all([window.fetchEmployees?fetchEmployees():Promise.resolve(),window.fetchAttendance?fetchAttendance():Promise.resolve(),window.fetchLeaves?fetchLeaves():Promise.resolve(),window.fetchSettings?fetchSettings():Promise.resolve()]).then(function(){
+        if(typeof refreshCurrentProfileFromStore==='function')refreshCurrentProfileFromStore();
+        if(activeText==='admin')return;
+        if(typeof loadDashboard==='function')loadDashboard();
+        if(activeText==='check in'&&typeof loadAttendanceTab==='function')loadAttendanceTab();
+        if(activeText==='leave'&&typeof loadMyLeaves==='function')loadMyLeaves();
+        if(activeText==='profile'&&typeof loadProfileTab==='function')loadProfileTab();
+      }).catch(function(){});
+    },60000);
+  };
+  window.startAdminAutoRefresh=function(){
+    safeClearTimer('_adminRefreshTimer');
+    window._adminRefreshTimer=setInterval(function(){
+      if(!window.currentProfile){safeClearTimer('_adminRefreshTimer');return;}
+      var adminTab=document.getElementById('tab-admin');
+      if(adminTab&&adminTab.style.display!=='none'){
+        Promise.all([window.fetchAttendance?fetchAttendance():Promise.resolve(),window.fetchLeaves?fetchLeaves():Promise.resolve()]).catch(function(){});
+        return;
+      }
+      if(typeof loadDashboard==='function')loadDashboard();
+    },90000);
+  };
+  setTimeout(function(){
+    safeClearTimer('_userRefreshTimer');safeClearTimer('_adminRefreshTimer');
+    if(window.currentProfile){window.startUserAutoRefresh();if(currentProfile.is_admin||currentProfile.role==='admin')window.startAdminAutoRefresh();}
+  },1200);
+
+  var UGM_GEOFENCE_TIMER=null,UGM_GEOFENCE_WATCH=null;
+  function minutesNow(){var n=new Date();return n.getHours()*60+n.getMinutes();}
+  function beforeSixPM(){return minutesNow()<1080;}
+  function inLunchWindow(){var m=minutesNow();return m>=810&&m<=880;}
+  function isAdminUser(){return !!(window.currentProfile&&(currentProfile.is_admin||currentProfile.role==='admin'));}
+  function geofenceAllowedToRun(){return !!(window.currentProfile&&!isAdminUser()&&beforeSixPM()&&!inLunchWindow());}
+  function logoutForGeoFence(dist){
+    try{toast('📍 Auto logout: office range se bahar ('+Math.round(dist)+'m)',5000);}catch(e){}
+    stopGeoFenceMonitor();
+    setTimeout(function(){if(typeof doSignOut==='function')doSignOut();else{try{setData('session',null);}catch(e){}location.reload();}},500);
+  }
+  function checkGeoPosition(lat,lon){
+    if(!geofenceAllowedToRun())return;
+    var s=(typeof getSettings==='function')?getSettings():{};
+    var offLat=parseFloat(s.office_lat||'0'),offLon=parseFloat(s.office_lng||'0'),radius=parseInt(s.office_radius||500,10);
+    if(!offLat||!offLon||typeof calcDistance!=='function')return;
+    var dist=calcDistance(lat,lon,offLat,offLon);
+    if(dist>radius)logoutForGeoFence(dist);
+  }
+  function oneShotGeoCheck(){
+    if(!geofenceAllowedToRun()||!navigator.geolocation)return;
+    navigator.geolocation.getCurrentPosition(function(p){checkGeoPosition(p.coords.latitude,p.coords.longitude);},function(){},{enableHighAccuracy:true,timeout:20000,maximumAge:45000});
+  }
+  function startGeoFenceMonitor(){
+    stopGeoFenceMonitor();
+    if(!navigator.geolocation)return;
+    UGM_GEOFENCE_TIMER=setInterval(oneShotGeoCheck,60000);
+    UGM_GEOFENCE_WATCH=navigator.geolocation.watchPosition(function(p){checkGeoPosition(p.coords.latitude,p.coords.longitude);},function(){},{enableHighAccuracy:true,timeout:25000,maximumAge:30000});
+    setTimeout(oneShotGeoCheck,3000);
+  }
+  function stopGeoFenceMonitor(){
+    if(UGM_GEOFENCE_TIMER){clearInterval(UGM_GEOFENCE_TIMER);UGM_GEOFENCE_TIMER=null;}
+    if(UGM_GEOFENCE_WATCH!==null){try{navigator.geolocation.clearWatch(UGM_GEOFENCE_WATCH);}catch(e){}UGM_GEOFENCE_WATCH=null;}
+  }
+  var oldShowMain=window.showMain;
+  window.showMain=function(){var r=oldShowMain?oldShowMain.apply(this,arguments):undefined;setTimeout(function(){if(geofenceAllowedToRun())startGeoFenceMonitor();else stopGeoFenceMonitor();},1000);return r;};
+  var oldSignOut=window.doSignOut;
+  window.doSignOut=function(){stopGeoFenceMonitor();safeClearTimer('_userRefreshTimer');safeClearTimer('_adminRefreshTimer');return oldSignOut?oldSignOut.apply(this,arguments):undefined;};
+  setTimeout(function(){if(window.currentProfile&&geofenceAllowedToRun())startGeoFenceMonitor();},1800);
+  window.testAutoCheckout=function(){oneShotGeoCheck();try{toast('Geo-fence logout test executed');}catch(e){}};
+
+  function dayNameFromDate(dateStr){try{var p=String(dateStr||'').split('-').map(Number);if(p.length>=3){var d=new Date(p[0],p[1]-1,p[2]);return ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][d.getDay()];}}catch(e){}return '';}
+  function sid(v){return String(v==null?'':v);}
+  window.exportCSVRange=function(from,to,name){
+    var emps=(typeof getEmployees==='function')?getEmployees():[];
+    var records=((typeof getAttendance==='function')?getAttendance():[]).filter(function(a){return a.date>=from&&a.date<=to;});
+    var header=['Date','Day','Emp ID','Employee','Designation','Department','Check In','Check Out','Type','Status','Checkout Status','OT Hours','Note'];
+    var rows=records.map(function(a){
+      var emp=emps.find(function(e){return sid(e.id)===sid(a.employee_id);});
+      var otHrs='';
+      if(a.check_in&&a.check_out&&String(a.work_type||'').includes('OT')){var ci=a.check_in.split(':').map(Number),co=a.check_out.split(':').map(Number);otHrs=Math.round(((co[0]*60+co[1])-(ci[0]*60+ci[1]))/60*100)/100;}
+      return [a.date||'',dayNameFromDate(a.date),emp?emp.emp_id:'',emp?emp.name:'',emp?(emp.designation||''):'',emp?(emp.department||''):'',a.check_in||'',a.check_out||'',a.work_type||'Office',a.status||'',a.checkout_status||'',otHrs,a.note||''];
+    });
+    if(typeof dlCSV==='function')dlCSV([header].concat(rows),'attendance_'+name+'.csv');
+  };
+  window.exportOTCSV=function(){
+    var emps=(typeof getEmployees==='function')?getEmployees():[],now=new Date(),ym=now.getFullYear()+'-'+(typeof pad==='function'?pad(now.getMonth()+1):String(now.getMonth()+1).padStart(2,'0'));
+    var records=((typeof getAttendance==='function')?getAttendance():[]).filter(function(a){return String(a.date||'').startsWith(ym)&&['OT-Office','OT-WFH','WFH'].includes(a.work_type);});
+    var header=['Date','Day','Emp ID','Employee','Type','Check In','Check Out','Hours','Note'];
+    var rows=records.map(function(a){var emp=emps.find(function(e){return sid(e.id)===sid(a.employee_id);});var hrs='';if(a.check_in&&a.check_out){var ci=a.check_in.split(':').map(Number),co=a.check_out.split(':').map(Number);hrs=Math.round(((co[0]*60+co[1])-(ci[0]*60+ci[1]))/60*100)/100;}return [a.date||'',dayNameFromDate(a.date),emp?emp.emp_id:'',emp?emp.name:'',a.work_type||'',a.check_in||'',a.check_out||'',hrs,a.note||''];});
+    if(typeof dlCSV==='function')dlCSV([header].concat(rows),'OT_WFH_'+ym+'.csv');
+  };
+  window.exportWFHCSV=function(){window.exportOTCSV();};
+})();
+</script>
+
 </body>
 </html>
