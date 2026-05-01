@@ -774,12 +774,9 @@ function getAvatar(id){return getAvatarStore()[String(id)]||'';}
 
 function getEmployees(){
   let emps=getData('employees',null);
-  // Force refresh if employee count is less than expected (new employees added)
-  if(emps && emps.length < 2000){
-    emps=null; // Clear cache, use hardcoded
-    setData('employees',null);
-  }
-  if(!emps){
+  // FIX: do not wipe saved employees. Earlier code reset the cache when length < 2000,
+  // so newly added staff disappeared after refresh / sync.
+  if(!Array.isArray(emps) || !emps.length){
     emps=[
   {id:'1001',emp_id:'1001',name:'Ritu Tyagi',email:'ritutyagiea@upgromedia.com',password:'Ritu@1001',designation:'Executive Assistant',department:'Admin',role:'admin',is_admin:true,joining_date:'',date_of_birth:'',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
   {id:'1002',emp_id:'1002',name:'Vishal Srivastava',email:'vishal.editor@upgromedia.com',password:'Vishal@1002',designation:'Video Editor',department:'Production',role:'employee',is_admin:false,joining_date:'',date_of_birth:'',status_emoji:'😊',status_text:'Available',avatar_url:'',active:true},
@@ -2005,6 +2002,7 @@ function loadAdminStaff(){
         +'<button class="btn-sm" style="background:#fef9c3;color:#854d0e" data-eid="'+e.id+'" onclick="resetStaffPw(this.dataset.eid)">🔑 Password</button>'
         +'<button class="btn-sm" style="background:#fef2f2;color:#991b1b" data-eid="'+e.id+'" data-blk="'+(isBlocked?'1':'0')+'" onclick="toggleBlockBtn(this)">'+(isBlocked?'🔓 Unblock':'🔒 Block')+'</button>'
         +'<button class="btn-sm" style="background:'+(isInactive?'#f0fdf4':'#fee2e2')+';color:'+(isInactive?'#16a34a':'#991b1b')+'" data-eid="'+e.id+'" data-act="'+(isInactive?'1':'0')+'" onclick="toggleActiveBtn(this)">'+(isInactive?'✅ Activate':'⛔ Deactivate')+'</button>'
+        +'<button class="btn-sm" style="background:#7f1d1d;color:#fff" data-eid="'+e.id+'" onclick="deleteEmployeeBtn(this)">🗑️ Delete</button>'
         +'</div>'
         +'</div>';
     }).join('')
@@ -2188,6 +2186,43 @@ async function deleteStaffRecord(recId,empId){
   var m=document.getElementById('staff-att-modal');
   if(m)m.remove();
   openStaffAttendance(empId);
+}
+
+function deleteEmployeeBtn(btn){
+  if(!btn || !btn.dataset) return;
+  deleteEmployee(btn.dataset.eid);
+}
+
+async function deleteEmployee(id){
+  id=String(id||'');
+  if(!id){toast('Employee ID missing');return;}
+  var emps=getEmployees();
+  var emp=emps.find(function(e){return String(e.id)===id;});
+  if(!emp){toast('Employee not found');return;}
+  if(currentProfile && String(currentProfile.id)===id){
+    toast('Current logged-in user cannot be deleted');
+    return;
+  }
+  var msg='Delete '+(emp.name||'this employee')+' permanently?\n\nThis will remove employee profile, attendance records, and leave records from this portal.';
+  if(!confirm(msg)) return;
+
+  try{
+    await getSB().from('attendance').delete().eq('employee_id',id);
+    await getSB().from('leaves').delete().eq('employee_id',id);
+    await getSB().from('employees').delete().eq('id',id);
+  }catch(e){
+    console.warn('Supabase employee delete failed',e);
+  }
+
+  saveEmployees(emps.filter(function(e){return String(e.id)!==id;}));
+  saveAttendance(getAttendance().filter(function(a){return String(a.employee_id)!==id;}));
+  saveLeaves(getLeaves().filter(function(l){return String(l.employee_id)!==id;}));
+  try{setAvatar(id,'');}catch(e){}
+
+  var attModal=document.getElementById('staff-att-modal');
+  if(attModal)attModal.remove();
+  toast('🗑️ Employee deleted');
+  loadAdminStaff();
 }
 
 function openAddStaff(){document.body.appendChild(createStaffModal('Add New Employee',null));}
